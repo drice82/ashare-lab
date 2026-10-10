@@ -1,0 +1,16 @@
+services:
+  api:
+    environment:
+      REQUESTS_PER_MINUTE: "200"
+      SYNC_CONCURRENCY: "4"
+    volumes:
+      - real-data:/app/data
+  worker:
+    environment:
+      REQUESTS_PER_MINUTE: "200"
+      SYNC_CONCURRENCY: "4"
+    volumes:
+      - real-data:/app/data
+volumes:
+  real-data:
+    name: ashare-lab-real-data

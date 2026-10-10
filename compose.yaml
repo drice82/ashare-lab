@@ -1,0 +1,55 @@
+name: ashare-lab
+services:
+  api:
+    build:
+      context: .
+      target: backend
+    image: ashare-lab-backend:0.1
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment: &backend-env
+      DATA_DIR: /app/data
+      DATABASE_PATH: /app/data/business.db
+      API_HOST: 0.0.0.0
+      INTERNAL_NETWORK_ONLY: "true"
+      TZ: Asia/Shanghai
+      POLARS_MAX_THREADS: "2"
+    volumes:
+      - lab-data:/app/data
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=5)"]
+      interval: 15s
+      timeout: 6s
+      retries: 5
+    mem_limit: 1g
+  worker:
+    image: ashare-lab-backend:0.1
+    restart: unless-stopped
+    command: ["ashare", "worker"]
+    env_file:
+      - path: .env
+        required: false
+    environment: *backend-env
+    volumes:
+      - lab-data:/app/data
+    depends_on:
+      api:
+        condition: service_healthy
+    mem_limit: 1g
+  web:
+    build:
+      context: .
+      target: frontend
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    mem_limit: 128m
+volumes:
+  lab-data:

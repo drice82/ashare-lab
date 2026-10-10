@@ -1,0 +1,116 @@
+@import "tailwindcss";
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: #fff;
+  --color-muted: #f1f3ef;
+  --color-muted-foreground: #64756b;
+  --color-border: #e0e6df;
+}
+:root {
+  font-family:
+    Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui,
+    sans-serif;
+  --background: #f5f6f2;
+  --foreground: #000000;
+  --card: #fff;
+  --primary: #245844;
+  font-synthesis: none;
+}
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+}
+input:not([type="checkbox"]),
+select {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  min-height: 40px;
+  padding: 8px 11px;
+  background: white;
+  font-size: 14px;
+  width: 100%;
+}
+input:focus,
+select:focus {
+  outline: 2px solid #72a48e;
+  outline-offset: 1px;
+}
+input[type="checkbox"] {
+  accent-color: var(--primary);
+}
+label {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+  color: #596b5e;
+}
+th {
+  text-align: left;
+  font-weight: 500;
+  font-size: 12px;
+  color: #718076;
+  white-space: nowrap;
+  background: #fafbf8;
+}
+td,
+th {
+  padding: 13px 16px;
+  border-bottom: 1px solid #edf0e9;
+}
+td {
+  font-size: 13px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+tbody tr:hover {
+  background: #f7faf6;
+}
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+.eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  color: #788879;
+  text-transform: uppercase;
+}
+.badge {
+  font-size: 11px;
+  padding: 4px 9px;
+  border-radius: 5px;
+  background: #eef4ed;
+  color: #4f745a;
+}
+.positive {
+  color: #bd4940;
+}
+.negative {
+  color: #258568;
+}
+
+.neutral {
+  color: #000000;
+}
+
+.dca-summary th,
+.dca-summary td {
+  padding: 8px 12px;
+}
+.dca-summary tbody th {
+  background: transparent;
+}
+@media (max-width: 639px) {
+  .dca-summary thead {
+    display: none;
+  }
+  .dca-summary tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}
