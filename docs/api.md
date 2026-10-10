@@ -55,3 +55,13 @@ localhost研究接口默认无全站认证，管理接口仍要求独立密码�
 结果不完整时完整收益指标为空，曲线和账本仅为可计算部分。取消及失败无可访问结果。详细口径见backtest-rules.md。
 
 状态接口的URL与字段保持兼容，统计按不可变版本读取摘要，任务状态仍实时读取。研究任务第三次运行中断后为failed，error说明“任务反复中断”，不擅自判定OOM；用户可重新提交研究任务，同步恢复接口及检查点语义不变。筛选计算批次更新progress，结果发布成功后才达到1。
+
+## 历史任务删除
+
+四类任务详情路径支持 DELETE：`/api/v1/screening/runs/{job_id}`、`/api/v1/backtest/runs/{job_id}`、`/api/v1/dca/runs/{job_id}`、`/api/v1/data/sync/{job_id}`。成功返回 HTTP 200 和 `{"deleted":true,"id":"任务ID"}`。不存在或类型不匹配返回 404；queued、running、cancel_requested 返回 409（task_active），应先取消并等待结束。succeeded、failed、cancelled、partial 均可永久删除，包含旧任务和自动同步任务。
+
+删除清理任务、日志、同步检查点及该任务 results 目录（含未发布的临时结果）。已发布数据版本、行情文件、其他任务快照及调度时段领取记录保留。文件清理失败返回 503（cleanup_failed）并保留任务记录，用户可重试；中断后也可重试，已缺失文件不阻止删除。数据库与文件系统不构成跨介质事务，清理中断可能已移除部分结果文件。
+
+接口沿用 API 访问密钥；同步删除另需 `X-Data-Management-Password`，研究任务删除不要求数据管理密码。
+
+`GET /api/v1/jobs` 新增 `offset`（默认 0，非负），沿用 `limit`（默认20，最大100）及原数组响应，按 created_at、id 降序排列。四类历史页面每页20条，可访问全部旧任务。

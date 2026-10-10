@@ -44,9 +44,13 @@ export function PageTitle({
 export function TaskTable({
   jobs,
   onSelect,
+  onDelete,
+  deleting = false,
 }: {
   jobs: ResearchJob[];
   onSelect?: (id: string) => void;
+  onDelete?: (job: ResearchJob) => void;
+  deleting?: boolean;
 }) {
   return jobs.length ? (
     <div className="overflow-x-auto">
@@ -73,6 +77,11 @@ export function TaskTable({
                     : job.payload.mode === "namechange"
                       ? "历史名称更新"
                       : "市场数据同步"}
+                {(job.kind === "dca" || job.kind === "backtest") && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {job.payload.start_date} 至 {job.payload.end_date}
+                  </p>
+                )}
                 <p className="mt-1 font-mono text-[10px] text-muted-foreground">
                   {job.id.slice(0, 8)}
                 </p>
@@ -98,17 +107,21 @@ export function TaskTable({
                     onClick={() => onSelect(job.id)}
                     className="text-primary hover:underline"
                   >
-                    查看日志
+                    {job.kind === "sync" ? "查看日志" : "查看"}
                   </button>
                 ) : (
                   <Link
-                    to={`/${job.kind === "dca" ? "dca" : "screening"}?run=${job.id}`}
+                    to={`/${job.kind === "backtest" ? "backtest" : job.kind === "dca" ? "dca" : "screening"}?run=${job.id}`}
                     className="inline-flex items-center gap-1 text-primary"
                   >
                     查看
                     <ArrowUpRight size={14} />
                   </Link>
                 )}
+                {onDelete && <button className="ml-4 text-red-700 disabled:opacity-40"
+                  aria-label={`删除任务 ${job.id}`} disabled={deleting || !["succeeded", "failed", "cancelled", "partial"].includes(job.status)}
+                  title={["succeeded", "failed", "cancelled", "partial"].includes(job.status) ? "永久删除任务" : "请先取消任务，等待任务结束后再删除"}
+                  onClick={() => onDelete(job)}>删除</button>}
               </td>
             </tr>
           ))}

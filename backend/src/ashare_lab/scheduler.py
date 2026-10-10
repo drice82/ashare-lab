@@ -139,9 +139,12 @@ class MonthlyNameScheduler:
                     attempt=0,
                 )
             )
-        self.db.log(
-            job_id, "info", f"{self.mode} 自动任务 {due.isoformat()}：北京时间 {self.schedule}"
-        )
+            self.db.log(
+                job_id,
+                "info",
+                f"{self.mode} 自动任务 {due.isoformat()}：北京时间 {self.schedule}",
+                connection=conn,
+            )
 
     def status(
         self,

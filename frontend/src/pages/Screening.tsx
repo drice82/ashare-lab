@@ -1,3 +1,4 @@
+import { TaskHistory } from "../components/TaskHistory";
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Filter, Save } from "lucide-react";
@@ -40,6 +41,7 @@ export default function Screening() {
   );
   const market = useResource<MarketStatus>("/market/status");
   const presets = useResource<Preset[]>("/screening/presets");
+  const [historyRevision, setHistoryRevision] = useState(0);
   const [query, setQuery] = useSearchParams();
   const runId = query.get("run");
   const task = useResource<Job>(
@@ -103,6 +105,7 @@ export default function Screening() {
         body: JSON.stringify(definition()),
       });
       setQuery({ run: job.id });
+      setHistoryRevision((value) => value + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "筛选失败");
     } finally {
@@ -351,6 +354,11 @@ export default function Screening() {
       {runId && task.data?.status === "succeeded" && (
         <ResultsTable key={runId} runId={runId} />
       )}
+      <Card className="mt-6">
+        <h2 className="border-b border-border p-5 font-semibold">历史筛选任务</h2>
+        <TaskHistory kind="screening" refreshKey={historyRevision} onSelect={(id) => setQuery({run: id})}
+          onDeleted={(id) => {if (runId === id) {loadedRun.current = "";setQuery((params) => {params.delete("run");return params;});}}} />
+      </Card>
     </>
   );
 }

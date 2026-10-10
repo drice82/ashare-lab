@@ -131,6 +131,8 @@ E2E_BASE_URL=http://127.0.0.1:8080 npx playwright test
 
 实际检查结果记录在 [验证记录](docs/verification.md)，开发进度记录在 [开发记录](docs/development.md)。
 
+远端开发主机迁移和真实数据路径见 [迁移验收与开发说明](docs/remote-migration.md)。
+
 ## 启停、更新与备份
 
 ```bash

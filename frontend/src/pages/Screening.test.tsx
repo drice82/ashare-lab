@@ -147,6 +147,6 @@ describe("筛选主要流程", () => {
         <Screening />
       </MemoryRouter>,
     );
-    expect(await screen.findByRole("alert")).toHaveTextContent("数据未就绪");
+    expect((await screen.findAllByRole("alert")).every((alert) => alert.textContent === "数据未就绪")).toBe(true);
   });
 });

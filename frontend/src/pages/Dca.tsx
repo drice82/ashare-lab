@@ -1,3 +1,4 @@
+import { TaskHistory } from "../components/TaskHistory";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, downloadCsv, useResource } from "../api";
@@ -49,13 +50,13 @@ const money = (value: number | null | undefined) =>
   formatMoney(value, " 元", "未知");
 export default function Dca() {
   const options = useResource<DcaOptions>("/dca/options");
-  const history = useResource<DcaJob[]>("/jobs?kind=dca", 5000);
+  const [historyRevision, setHistoryRevision] = useState(0);
   const [query, setQuery] = useSearchParams();
   const runId = query.get("run");
   const task = useResource<DcaJob>(runId ? `/dca/runs/${runId}` : null, 2000);
   const [page, setPage] = useState(1);
   const result = useResource<DcaResults>(
-    task.data?.status === "succeeded"
+    runId && task.data?.id === runId && task.data?.status === "succeeded"
       ? `/dca/runs/${runId}/results?page=${page}&page_size=50`
       : null,
   );
@@ -119,7 +120,7 @@ export default function Dca() {
       });
       setPage(1);
       setQuery({ run: job.id });
-      history.reload();
+      setHistoryRevision((value) => value + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "模拟提交失败");
     } finally {
@@ -131,12 +132,12 @@ export default function Dca() {
     try {
       await api(`/dca/runs/${runId}/cancel`, { method: "POST" });
       task.reload();
-      history.reload();
+      setHistoryRevision((value) => value + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "取消失败");
     }
   }
-  const data = result.data;
+  const data = runId ? result.data : undefined;
   const summary = data?.summary;
   return (
     <>
@@ -150,8 +151,7 @@ export default function Dca() {
             error ||
             options.error ||
             task.error ||
-            result.error ||
-            history.error
+            result.error
           }
         />
         {(data?.fixture_mode ?? options.data?.fixture_mode) && (
@@ -546,25 +546,9 @@ export default function Dca() {
         )}
         <Card className="p-5">
           <h2 className="mb-3">历史定投任务</h2>
-          <div className="space-y-2">
-            {history.data?.map((job) => (
-              <button
-                key={job.id}
-                className="block w-full rounded-lg border p-3 text-left text-sm hover:bg-muted"
-                onClick={() => {
-                  setPage(1);
-                  setQuery({ run: job.id });
-                }}
-              >
-                {job.payload.stock_code} · {job.payload.start_date} 至{" "}
-                {job.payload.end_date} · {statusLabels[job.status]} ·{" "}
-                {job.id.slice(0, 8)}
-              </button>
-            ))}
-            {!history.data?.length && (
-              <p className="text-sm text-muted-foreground">暂无任务</p>
-            )}
-          </div>
+          <TaskHistory kind="dca" refreshKey={historyRevision}
+            onSelect={(id) => {setPage(1);setQuery({run: id});}}
+            onDeleted={(id) => {if (runId === id) {setPage(1);setQuery((params) => {params.delete("run");return params;});}}} />
         </Card>
       </div>
     </>

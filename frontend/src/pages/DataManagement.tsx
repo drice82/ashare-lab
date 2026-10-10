@@ -1,3 +1,4 @@
+import { TaskHistory } from "../components/TaskHistory";
 import { useEffect, useState } from "react";
 import { Database, RefreshCw } from "lucide-react";
 import { api as requestApi, useResource as resource } from "../api";
@@ -5,7 +6,6 @@ import {
   ErrorBanner,
   Loading,
   PageTitle,
-  TaskTable,
 } from "../components/common";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
@@ -71,7 +71,7 @@ function Management({ password }: { password: string }) {
     return requestApi<T>(path, options, password);
   }
   const status = useResource<MarketStatus>("/data/status", 15000);
-  const tasks = useResource<Job[]>("/jobs?kind=sync", 3000);
+  const [historyRevision, setHistoryRevision] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const task = useResource<Job>(
     selected ? `/data/sync/${selected}` : null,
@@ -101,7 +101,7 @@ function Management({ password }: { password: string }) {
         }),
       });
       setSelected(job.id);
-      tasks.reload();
+      setHistoryRevision((value) => value + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "同步提交失败");
     } finally {
@@ -112,7 +112,7 @@ function Management({ password }: { password: string }) {
     try {
       await api(`/data/sync/${selected}/${name}`, { method: "POST" });
       task.reload();
-      tasks.reload();
+      setHistoryRevision((value) => value + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "任务操作失败");
     }
@@ -126,7 +126,7 @@ function Management({ password }: { password: string }) {
         subtitle="将数据同步到本地仓库，查看覆盖范围、版本与任务日志。"
       />
       <ErrorBanner
-        message={error || status.error || tasks.error || task.error}
+        message={error || status.error || task.error}
       />
       <Card className="mb-6 p-6">
         <div className="mb-5 flex items-center gap-2 font-semibold">
@@ -289,7 +289,8 @@ function Management({ password }: { password: string }) {
       </Card>
       <Card>
         <h2 className="border-b border-border p-5 font-semibold">同步任务</h2>
-        <TaskTable jobs={tasks.data ?? []} onSelect={setSelected} />
+        <TaskHistory kind="sync" password={password} refreshKey={historyRevision} onSelect={setSelected}
+          onDeleted={(id) => {if (selected === id) setSelected(null);status.reload();}} />
       </Card>
       {task.data && (
         <Card className="mt-6 p-5">

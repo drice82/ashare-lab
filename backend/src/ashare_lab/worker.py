@@ -4,9 +4,10 @@ import os
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import polars as pl
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from ashare_lab.backtest import BACKTEST_VERSION, STRATEGY_VERSION
 from ashare_lab.backtest import prepare as prepare_backtest
@@ -49,6 +50,7 @@ class Worker:
 
     def recover(self) -> None:
         with self.db.engine.begin() as conn:
+            conn.execute(text("BEGIN IMMEDIATE"))
             abandoned = (
                 conn.execute(select(jobs).where(jobs.c.status.in_(["running", "cancel_requested"])))
                 .mappings()
@@ -91,6 +93,7 @@ class Worker:
 
     def run_once(self) -> bool:
         with self.db.engine.begin() as conn:
+            conn.execute(text("BEGIN IMMEDIATE"))
             row = (
                 conn.execute(
                     select(jobs)
@@ -120,6 +123,18 @@ class Worker:
 
         thread = threading.Thread(target=heartbeat, daemon=True)
         thread.start()
+
+        def finish(status: str, level: str, message: str, **values: Any) -> None:
+            stopped.set()
+            thread.join()
+            with self.db.engine.begin() as conn:
+                conn.execute(
+                    jobs.update()
+                    .where(jobs.c.id == job_id)
+                    .values(status=status, updated_at=now(), **values)
+                )
+                self.db.log(job_id, level, message, connection=conn)
+
         try:
             self.check(job_id)
             if job["kind"] == "sync":
@@ -267,34 +282,37 @@ class Worker:
             else:
                 raise ProviderError("unknown_job_kind", "未知任务类型")
             self.check(job_id)
-            self.db.update(job_id, status=status, progress=1, result=result, error=None)
-            self.db.log(
-                job_id,
+            finish(
+                status,
                 "info",
                 "任务已完成" if status == "succeeded" else "同步完成，存在可选接口降级",
+                progress=1,
+                result=result,
+                error=None,
             )
         except Cancelled:
-            self.db.update(job_id, status="cancelled")
-            self.db.log(job_id, "warning", "任务已取消，已发布数据保留")
+            finish("cancelled", "warning", "任务已取消，已发布数据保留")
         except (ProviderError, ValueError) as exc:
             message = (
                 str(exc) if isinstance(exc, ProviderError) else "任务数据或参数错误，请检查数据状态"
             )
-            self.db.update(
-                job_id,
-                status="failed",
+            finish(
+                "failed",
+                "error",
+                message,
                 error={
                     "code": exc.code if isinstance(exc, ProviderError) else "invalid_data",
                     "message": message,
                 }.__str__(),
             )
-            self.db.log(job_id, "error", message)
         except Exception as exc:
-            # Never persist arbitrary exception messages: upstream errors can echo secrets.
-            self.db.update(
-                job_id, status="failed", error=f"内部错误 ({type(exc).__name__})，请运行诊断测试"
+            # Never persist exception messages that may contain upstream secrets.
+            finish(
+                "failed",
+                "error",
+                f"内部错误类型：{type(exc).__name__}",
+                error=f"内部错误 ({type(exc).__name__})，请运行诊断测试",
             )
-            self.db.log(job_id, "error", f"内部错误类型：{type(exc).__name__}")
         finally:
             stopped.set()
             thread.join(timeout=3)

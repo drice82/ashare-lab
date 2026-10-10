@@ -62,3 +62,22 @@ describe("单股回测", () => {
     expect(vi.mocked(fetch).mock.calls.some(([url])=>String(url).includes("/results?"))).toBe(false);
   });
 });
+
+it("删除当前历史回测清除结果并保留参数", async () => {
+  mockFetch();
+  const base = vi.mocked(fetch).getMockImplementation()!;
+  let deleted = false;
+  vi.mocked(fetch).mockImplementation(async (url, options) => {
+    if (options?.method === "DELETE") {deleted = true;return Response.json({deleted:true});}
+    if (String(url).includes("/jobs?")) return Response.json(deleted ? [] : [{id:"b1",kind:"backtest",status:"succeeded",progress:1,
+      payload:definition,created_at:"2024-06-28",result:null}]);
+    return base(url, options);
+  });
+  render(<MemoryRouter initialEntries={["/backtest?run=b1"]}><Backtest /></MemoryRouter>);
+  await screen.findByText("最大回撤");
+  fireEvent.click(await screen.findByRole("button",{name:"删除任务 b1"}));
+  fireEvent.click(screen.getByRole("button",{name:"确认删除"}));
+  await waitFor(() => expect(screen.queryByText("最大回撤")).not.toBeInTheDocument());
+  expect(screen.getByLabelText("股票代码")).toHaveValue("000001.SZ");
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/runs/null"))).toBe(false);
+});

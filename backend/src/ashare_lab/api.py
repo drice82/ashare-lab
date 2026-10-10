@@ -99,6 +99,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def sync(request: SyncRequest) -> dict[str, Any]:
         return service.submit_sync(request)
 
+    @app.delete("/api/v1/data/sync/{job_id}")
+    def delete_sync(job_id: str) -> dict[str, Any]:
+        return service.delete_job(job_id, "sync")
+
     @app.get("/api/v1/data/sync/{job_id}")
     def sync_job(job_id: str) -> dict[str, Any]:
         return service.job(job_id, "sync")
@@ -115,8 +119,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def task_list(
         kind: Literal["sync", "screening", "dca", "backtest"] | None = None,
         limit: int = Query(20, ge=1, le=100),
+        offset: int = Query(0, ge=0),
     ) -> list[dict[str, Any]]:
-        return service.task_list(kind, limit)
+        return service.task_list(kind, limit, offset)
 
     @app.get("/api/v1/screening/rules")
     def rules() -> dict[str, Any]:
@@ -133,6 +138,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/v1/screening/run", status_code=202)
     def screening(request: ScreeningRequest) -> dict[str, Any]:
         return service.submit_screen(request)
+
+    @app.delete("/api/v1/screening/runs/{job_id}")
+    def delete_screening(job_id: str) -> dict[str, Any]:
+        return service.delete_job(job_id, "screening")
 
     @app.get("/api/v1/screening/runs/{job_id}")
     def screening_job(job_id: str) -> dict[str, Any]:
@@ -196,6 +205,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def backtest_run(request: BacktestRequest) -> dict[str, Any]:
         return service.backtest.submit_backtest(request)
 
+    @app.delete("/api/v1/backtest/runs/{job_id}")
+    def delete_backtest(job_id: str) -> dict[str, Any]:
+        return service.delete_job(job_id, "backtest")
+
     @app.get("/api/v1/backtest/runs/{job_id}")
     def backtest_job(job_id: str) -> dict[str, Any]:
         return service.job(job_id, "backtest")
@@ -221,6 +234,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/v1/dca/run", status_code=202)
     def dca_run(request: DcaRequest) -> dict[str, Any]:
         return service.dca.submit(request)
+
+    @app.delete("/api/v1/dca/runs/{job_id}")
+    def delete_dca(job_id: str) -> dict[str, Any]:
+        return service.delete_job(job_id, "dca")
 
     @app.get("/api/v1/dca/runs/{job_id}")
     def dca_job(job_id: str) -> dict[str, Any]:

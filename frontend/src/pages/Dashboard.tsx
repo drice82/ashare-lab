@@ -1,3 +1,4 @@
+import { DeletableTasks } from "../components/TaskHistory";
 import { ArrowRight, Database, Filter, Layers, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useResource } from "../api";
@@ -5,7 +6,6 @@ import {
   ErrorBanner,
   Loading,
   PageTitle,
-  TaskTable,
 } from "../components/common";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
@@ -13,7 +13,7 @@ import { statusLabels } from "../format";
 import type { MarketStatus } from "../types";
 
 export default function Dashboard() {
-  const { data, error } = useResource<MarketStatus>("/market/status", 15000);
+  const { data, error, reload } = useResource<MarketStatus>("/market/status", 15000);
   return (
     <>
       <PageTitle
@@ -109,7 +109,7 @@ export default function Dashboard() {
                   进入筛选工作台 →
                 </Link>
               </div>
-              <TaskTable jobs={data.recent_screening} />
+              <DeletableTasks jobs={data.recent_screening} onDeleted={() => reload()} />
             </Card>
             <p className="mt-5 text-xs text-muted-foreground">
               历史可见性限制：{data.pit_limitation}。交易日缺口：

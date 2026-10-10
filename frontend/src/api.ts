@@ -65,6 +65,7 @@ export function useResource<T>(path: string | null, pollMs = 0, managementPasswo
   useEffect(() => {
     if (!path) {
       setData(undefined);
+      setError("");
       refresh.current = () => {};
       return;
     }

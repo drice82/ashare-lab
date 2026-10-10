@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import shutil
 from collections import OrderedDict
 from copy import deepcopy
 from datetime import date, datetime, timedelta
@@ -10,12 +11,22 @@ from zoneinfo import ZoneInfo
 
 import polars as pl
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.sqlite import insert
 
 from ashare_lab.backtest_service import BacktestService
 from ashare_lab.config import Settings
-from ashare_lab.db import Database, identifier, jobs, now, presets, rule_definitions, settings_table
+from ashare_lab.db import (
+    Database,
+    checkpoints,
+    identifier,
+    jobs,
+    logs,
+    now,
+    presets,
+    rule_definitions,
+    settings_table,
+)
 from ashare_lab.dca_service import DcaService
 from ashare_lab.factors import (
     BOOLEAN_FACTORS,
@@ -139,24 +150,61 @@ class ApplicationService:
             raise ServiceError(404, "not_found", "该类型任务不存在")
         return job
 
-    def task_list(self, kind: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+    def task_list(
+        self, kind: str | None = None, limit: int = 20, offset: int = 0
+    ) -> list[dict[str, Any]]:
         with self.db.engine.connect() as conn:
-            query = select(jobs).order_by(jobs.c.created_at.desc()).limit(limit)
+            query = (
+                select(jobs)
+                .order_by(jobs.c.created_at.desc(), jobs.c.id.desc())
+                .limit(limit)
+                .offset(offset)
+            )
             if kind:
                 query = query.where(jobs.c.kind == kind)
             return [dict(row) for row in conn.execute(query).mappings()]
 
+    def delete_job(self, job_id: str, kind: str) -> dict[str, Any]:
+        with self.db.engine.connect() as conn:
+            conn.execute(text("BEGIN IMMEDIATE"))
+            try:
+                job = conn.execute(select(jobs).where(jobs.c.id == job_id)).mappings().first()
+                if job is None or job["kind"] != kind:
+                    raise ServiceError(404, "not_found", "该类型任务不存在")
+                if job["status"] not in {"succeeded", "failed", "cancelled", "partial"}:
+                    raise ServiceError(409, "task_active", "请先取消任务，等待任务结束后再删除")
+                results_root = (self.repository.root / "results").resolve()
+                directory = results_root / job_id
+                if directory.parent != results_root or directory.is_symlink():
+                    raise ServiceError(503, "cleanup_failed", "结果目录异常，任务未删除")
+                try:
+                    shutil.rmtree(directory)
+                except FileNotFoundError:
+                    pass
+                except OSError as exc:
+                    raise ServiceError(
+                        503, "cleanup_failed", "结果文件清理失败，请重试删除"
+                    ) from exc
+                conn.execute(logs.delete().where(logs.c.job_id == job_id))
+                conn.execute(checkpoints.delete().where(checkpoints.c.job_id == job_id))
+                conn.execute(jobs.delete().where(jobs.c.id == job_id))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return {"deleted": True, "id": job_id}
+
     def cancel(self, job_id: str, kind: str) -> dict[str, Any]:
-        job = self.job(job_id, kind)
-        if job["status"] not in {"queued", "running", "cancel_requested"}:
-            raise ServiceError(409, "task_finished", "任务已结束")
         with self.db.engine.begin() as conn:
+            conn.execute(text("BEGIN IMMEDIATE"))
+            job = conn.execute(select(jobs).where(jobs.c.id == job_id)).mappings().first()
+            if job is None or job["kind"] != kind:
+                raise ServiceError(404, "not_found", "该类型任务不存在")
+            if job["status"] not in {"queued", "running", "cancel_requested"}:
+                raise ServiceError(409, "task_finished", "任务已结束")
             conn.execute(
                 jobs.update()
-                .where(
-                    jobs.c.id == job_id,
-                    jobs.c.status.in_(["queued", "running", "cancel_requested"]),
-                )
+                .where(jobs.c.id == job_id)
                 .values(
                     cancel_requested=True,
                     status="cancelled" if job["status"] == "queued" else "cancel_requested",
@@ -166,11 +214,24 @@ class ApplicationService:
         return self.job(job_id, kind)
 
     def resume(self, job_id: str) -> dict[str, Any]:
-        job = self.job(job_id, "sync")
-        if job["status"] not in {"failed", "cancelled", "partial"}:
-            raise ServiceError(409, "cannot_resume", "仅失败、取消或降级的同步任务可恢复")
-        self.db.update(job_id, status="queued", cancel_requested=False, error=None)
-        return self.job(job_id)
+        with self.db.engine.connect() as conn:
+            conn.execute(text("BEGIN IMMEDIATE"))
+            try:
+                job = conn.execute(select(jobs).where(jobs.c.id == job_id)).mappings().first()
+                if job is None or job["kind"] != "sync":
+                    raise ServiceError(404, "not_found", "同步任务不存在")
+                if job["status"] not in {"failed", "cancelled", "partial"}:
+                    raise ServiceError(409, "cannot_resume", "仅失败、取消或降级的同步任务可恢复")
+                conn.execute(
+                    jobs.update()
+                    .where(jobs.c.id == job_id)
+                    .values(status="queued", cancel_requested=False, error=None, updated_at=now())
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return self.job(job_id, "sync")
 
     def datasets(self, snapshot: dict[str, str] | None = None) -> list[dict[str, Any]]:
         output = []
