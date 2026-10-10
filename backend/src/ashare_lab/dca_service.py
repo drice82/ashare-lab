@@ -9,7 +9,7 @@ from typing import Any
 from ashare_lab.db import Database
 from ashare_lab.dca import DCA_VERSION, performance_metrics
 from ashare_lab.factors import UniverseManager
-from ashare_lab.schemas import BacktestRequest, DcaRequest, Universe
+from ashare_lab.schemas import BacktestCommonRequest, DcaRequest, Universe
 from ashare_lab.warehouse import MarketRepository
 
 REQUIRED = {"stock_basic", "trade_cal", "daily"}
@@ -62,7 +62,7 @@ class DcaService:
             {**snapshot, "_dca_version": DCA_VERSION, "_universe_policy": "survivors_v1"},
         )
 
-    def validate(self, request: DcaRequest | BacktestRequest) -> None:
+    def validate(self, request: DcaRequest | BacktestCommonRequest) -> None:
         from ashare_lab.services import ServiceError
 
         snapshot = request.data_versions

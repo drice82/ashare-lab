@@ -4,16 +4,35 @@ import calendar
 from collections.abc import Callable
 from datetime import date, timedelta
 from decimal import Decimal
+from math import expm1, isfinite, log
 from typing import Any
 
-from ashare_lab.dca import ZERO, confirmed_events, decimal, money
+from ashare_lab.dca import ZERO, check_factor_change, confirmed_events, decimal, money
 from ashare_lab.dca import prepare as prepare_market
 from ashare_lab.factors import adjusted_prices
 from ashare_lab.schemas import BacktestRequest
 from ashare_lab.warehouse import MarketRepository
 
-BACKTEST_VERSION = "1.0.0"
+BACKTEST_VERSION = "1.0.1"
 STRATEGY_VERSION = "1.0.0"
+
+
+def annualized_return(
+    initial: float, assets: float | None, start: str, end: str | None
+) -> float | None:
+    """Single contribution CAGR, measured over actual calendar days (365/year)."""
+    if assets is None or end is None or initial <= 0 or assets < 0:
+        return None
+    days = (date.fromisoformat(end) - date.fromisoformat(start)).days
+    if days <= 0:
+        return None
+    if assets == 0:
+        return -1.0
+    try:
+        value = expm1((log(assets) - log(initial)) * 365 / days)
+    except OverflowError:
+        return None
+    return value if isfinite(value) else None
 
 
 def anniversary(day: date, months: int) -> date:
@@ -85,6 +104,8 @@ def simulate(
     market: dict[str, Any],
     check: Callable[[], None] = lambda: None,
     progress: Callable[[float], None] = lambda value: None,
+    signal_provider: Callable[[str], tuple[str | None, str | None]] | None = None,
+    signal_label: str = "",
 ) -> dict[str, Any]:
     start, end = request.start_date.isoformat(), request.end_date.isoformat()
     all_days = [d for d in market["days"] if d <= end]
@@ -102,6 +123,7 @@ def simulate(
     last_price: Decimal | None = None
     valuation: str | None = None
     previous_factor: Decimal | None = None
+    observed_factor: Decimal | None = None
     confirmed: str | None = None
     complete = bool(market["dividend_complete"])
     peak, drawdown = request.initial_cash, ZERO
@@ -190,22 +212,26 @@ def simulate(
         problem = event_problem or problem
         if any(e["record_date"] == day and day <= "2015-09-08" for e in active.values()):
             problem = "历史分红税制未支持，停止计算；完整收益未知"
-        if (
-            factor is not None
-            and previous_factor is not None
-            and decimal(factor) != previous_factor
-        ):
-            per_share = sum(
-                (decimal(e["cash_div_tax"]) for e in active.values() if e["ex_date"] == day), ZERO
+        if not problem and factor is not None:
+            previous_factor, observed_factor, problem, warning = check_factor_change(
+                decimal(factor),
+                previous_factor,
+                observed_factor,
+                last_price,
+                bar.get("pre_close") if bar and not suspended else None,
+                sum(
+                    (decimal(e["cash_div_tax"]) for e in active.values() if e["ex_date"] == day),
+                    ZERO,
+                ),
+                day,
             )
-            if last_price is None or per_share <= 0 or last_price <= per_share:
-                problem = "无法解释的复权因子变化，可能存在未支持公司行动"
-            elif abs(
-                decimal(factor) / previous_factor / (last_price / (last_price - per_share)) - 1
-            ) > Decimal("0.001"):
-                problem = "复权因子与现金分红不一致"
+            if warning:
+                warnings.append(warning)
         side: str | None = None
-        if request.strategy == "ma_cross" and not suspended:
+        if signal_provider is not None and not suspended:
+            side, signal_problem = signal_provider(day)
+            problem = signal_problem or problem
+        elif request.strategy == "ma_cross" and not suspended:
             side, signal_problem = signal_at(day)
             problem = signal_problem or problem
         elif request.strategy == "buy_hold" and index == 0:
@@ -220,8 +246,6 @@ def simulate(
             warnings.append(f"{day}：{problem}")
             record(day, "unknown", reason=problem)
             break
-        if factor is not None:
-            previous_factor = decimal(factor)
         # Daily simulation assumes announced payment funds are available before the open.
         for entitlement in entitlements:
             if not entitlement["paid"] and entitlement["pay_date"] <= day:
@@ -337,7 +361,9 @@ def simulate(
             last_price, valuation = decimal(bar["close"]), day
         if side:
             reason = (
-                "一次性买入持有"
+                f"{signal_label}：{'买入' if side == 'buy' else '卖出'}"
+                if signal_provider is not None
+                else "一次性买入持有"
                 if request.strategy == "buy_hold"
                 else "金叉买入"
                 if side == "buy"
@@ -387,6 +413,11 @@ def simulate(
             "total_assets": float(assets) if complete else None,
             "profit": float(assets - request.initial_cash) if complete else None,
             "return_rate": float((assets - request.initial_cash) / request.initial_cash)
+            if complete
+            else None,
+            "annualized_return": annualized_return(
+                float(request.initial_cash), float(assets), start, confirmed
+            )
             if complete
             else None,
             "max_drawdown": float(drawdown) if complete else None,

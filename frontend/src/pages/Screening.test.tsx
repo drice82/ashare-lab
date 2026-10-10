@@ -42,6 +42,7 @@ describe("筛选主要流程", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string, options?: RequestInit) => {
+        if (url.includes("/jobs?")) return Response.json([]);
         if (url.endsWith("/screening/rules")) return Response.json(rules);
         if (url.endsWith("/market/status"))
           return Response.json({ latest_market_date: "2024-06-28" });
@@ -104,6 +105,7 @@ describe("筛选主要流程", () => {
       0.05,
     );
     expect(screen.getByText("-4.00%")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("tab", { name: "筛选结果" })).toHaveAttribute("aria-selected", "true"));
     fireEvent.click(screen.getByRole("button", { name: /收盘价/ }));
     await waitFor(() =>
       expect(
@@ -135,6 +137,29 @@ describe("筛选主要流程", () => {
     expect(screen.getByLabelText("第1层组合逻辑")).toHaveValue("OR");
     expect(screen.getByLabelText("启用条件1")).toBeChecked();
   });
+  it("历史页签独立展示且保留筛选条件", async () => {
+    render(
+      <MemoryRouter>
+        <Screening />
+      </MemoryRouter>,
+    );
+    await screen.findByLabelText("最低股息率");
+    fireEvent.change(screen.getByLabelText("最低股息率"), {
+      target: { value: "7" },
+    });
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(([url]) => String(url).includes("/jobs?")),
+    ).toBe(false);
+    fireEvent.click(screen.getByRole("tab", { name: "历史任务" }));
+    await screen.findByText(/暂无任务/);
+    expect(screen.getByLabelText("最低股息率")).not.toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "股票筛选" }));
+    expect(
+      (screen.getByLabelText("最低股息率") as HTMLInputElement).valueAsNumber,
+    ).toBeCloseTo(7);
+  });
   it("服务失败显示实际错误", async () => {
     vi.stubGlobal(
       "fetch",
@@ -147,6 +172,10 @@ describe("筛选主要流程", () => {
         <Screening />
       </MemoryRouter>,
     );
-    expect((await screen.findAllByRole("alert")).every((alert) => alert.textContent === "数据未就绪")).toBe(true);
+    expect(
+      (await screen.findAllByRole("alert")).every(
+        (alert) => alert.textContent === "数据未就绪",
+      ),
+    ).toBe(true);
   });
 });

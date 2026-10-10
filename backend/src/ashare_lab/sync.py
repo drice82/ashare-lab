@@ -60,7 +60,13 @@ class SyncService:
         self.db, self.repository, self.provider = db, repository, provider
         self.concurrency = concurrency
 
-    def run(self, job: dict[str, Any], check: Callable[[], None]) -> dict[str, Any]:
+    def run(
+        self,
+        job: dict[str, Any],
+        check: Callable[[], None],
+        *,
+        before_complete: Callable[[], None] | None = None,
+    ) -> dict[str, Any]:
         request = SyncRequest.model_validate(job["payload"])
         policy = job["snapshot"].get("_sync_policy")
         modern = policy in SURVIVOR_SYNC_POLICIES
@@ -271,6 +277,7 @@ class SyncService:
                     end,
                     request.history_refresh == "full",
                     check,
+                    before_complete=before_complete,
                 )
             except ProviderError as exc:
                 if exc.code != "permission_denied":

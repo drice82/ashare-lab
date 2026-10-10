@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 from unittest.mock import patch
 
 import polars as pl
@@ -164,3 +165,35 @@ def test_missing_warmup_calendar_date_is_unknown(system):
     result = service.backtest.result(job_id)
     assert result["summary"]["profit"] is None
     assert any("预热日历" in warning for warning in result["warnings"])
+
+
+def test_old_result_adds_cagr_without_rewriting_or_reading_new_market(system):
+    client, worker, service = system
+    job_id = client.post("/api/v1/backtest/run", json=payload(client)).json()["id"]
+    assert worker.run_once()
+    job = service.db.job(job_id)
+    file = service.repository.root / job["result"]["path"]
+    value = json.loads(file.read_text())
+    expected = value["summary"].pop("annualized_return")
+    file.write_text(json.dumps(value))
+    original = file.read_bytes()
+    with patch.object(
+        service.repository, "read", side_effect=AssertionError("must use saved results")
+    ):
+        result = service.backtest.result(job_id)
+    assert result["summary"]["annualized_return"] == expected
+    assert file.read_bytes() == original
+    result["summary"].pop("annualized_return")
+    assert result == value
+
+
+def test_old_engine_interrupted_task_is_rejected(system):
+    client, worker, service = system
+    job_id = client.post("/api/v1/backtest/run", json=payload(client)).json()["id"]
+    job = service.db.job(job_id)
+    service.db.update(
+        job_id, status="running", snapshot={**job["snapshot"], "_backtest_version": "1.0.0"}
+    )
+    worker.recover()
+    assert worker.run_once()
+    assert service.db.job(job_id)["status"] == "failed"

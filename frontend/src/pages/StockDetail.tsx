@@ -50,7 +50,9 @@ export default function StockDetail() {
         subtitle={`股票详情 · ${row?.as_of_date ?? bars.data?.anchor_date ?? ""}`}
         action={
           <Button asChild variant="outline">
-            <Link to={runId ? `/screening?run=${runId}` : "/screening"}>
+            <Link
+              to={runId ? `/screening?run=${runId}&tab=result` : "/screening"}
+            >
               <ArrowLeft size={15} />
               返回筛选
             </Link>
@@ -75,7 +77,11 @@ export default function StockDetail() {
       )}
       <Card className="overflow-hidden p-5">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="font-semibold">日 K 线与成交量</h2>
+          <h2 className="font-semibold">
+            日 K 线与成交量 ·{" "}
+            {row?.stock_name ?? bars.data?.instrument?.name ?? "名称未知"} ·{" "}
+            {code}
+          </h2>
           <div className="flex gap-4 text-xs">
             <span className="text-[#bd933d]">● MA20</span>
             <span className="text-[#788db0]">● MA60</span>

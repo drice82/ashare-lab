@@ -92,7 +92,7 @@ export default function Dashboard() {
                   让每一个筛选结果都有依据
                 </h2>
                 <p className="max-w-2xl text-sm text-muted-foreground">
-                  历史日期、固定数据版本与逐条件数值，让你的研究可以复核。分红使用已实施现金事件，数据缺口会明确标记。
+                  历史日期、任务参数与逐条件数值，让你的研究可以复核。分红使用已实施现金事件，数据缺口会明确标记。
                 </p>
               </div>
               <Button asChild variant="outline">

@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     api_access_token: SecretStr = SecretStr("")
     requests_per_minute: int = 40
     sync_concurrency: int = 4
+    worker_research_concurrency: int = 2
     worker_poll_seconds: float = 1.0
 
     @model_validator(mode="after")
@@ -31,6 +32,8 @@ class Settings(BaseSettings):
             raise ValueError("REQUESTS_PER_MINUTE 必须在 1–500 之间")
         if not 1 <= self.sync_concurrency <= 16:
             raise ValueError("SYNC_CONCURRENCY 必须在 1–16 之间")
+        if not 1 <= self.worker_research_concurrency <= 2:
+            raise ValueError("WORKER_RESEARCH_CONCURRENCY 必须在 1–2 之间")
         if not self.tushare_http_url.startswith(("https://", "http://")):
             raise ValueError("TUSHARE_HTTP_URL 必须使用 HTTP(S)")
         return self

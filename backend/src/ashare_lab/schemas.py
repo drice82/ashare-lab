@@ -3,7 +3,14 @@ from decimal import Decimal
 from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 StockCode = Annotated[str, Field(pattern=r"^(?:[036]\d{5})\.(?:SH|SZ)$")]
 
@@ -88,16 +95,13 @@ class DcaRequest(StrictModel):
         return self
 
 
-class BacktestRequest(StrictModel):
+class BacktestCommonRequest(StrictModel):
     stock_code: StockCode
     start_date: date
     end_date: date
     initial_cash: Annotated[Decimal, Field(gt=0, le=100_000_000, decimal_places=2)] = Decimal(
         "100000"
     )
-    strategy: Literal["buy_hold", "ma_cross"] = "buy_hold"
-    short_window: int = Field(default=20, ge=2, le=249)
-    long_window: int = Field(default=60, ge=3, le=250)
     commission_rate: Annotated[Decimal, Field(ge=0, le=Decimal("0.01"))] = Decimal("0.0003")
     minimum_commission: Annotated[Decimal, Field(ge=0, le=10000, decimal_places=2)] = Decimal("5")
     transfer_rate: Annotated[Decimal, Field(ge=0, le=Decimal("0.01"))] = Decimal("0.00001")
@@ -105,13 +109,83 @@ class BacktestRequest(StrictModel):
     data_versions: dict[str, str] = Field(min_length=1, max_length=20)
 
     @model_validator(mode="after")
-    def validate_range(self) -> "BacktestRequest":
+    def validate_range(self) -> "BacktestCommonRequest":
         if self.start_date > self.end_date:
             raise ValueError("开始日期不能晚于结束日期")
         if self.end_date > datetime.now(ZoneInfo("Asia/Shanghai")).date():
             raise ValueError("不能回测未来日期")
         if (self.end_date - self.start_date).days > 36525:
             raise ValueError("回测区间不能超过100年")
+        return self
+
+
+class BacktestRequest(BacktestCommonRequest):
+    strategy: Literal["buy_hold", "ma_cross"] = "buy_hold"
+    short_window: int = Field(default=20, ge=2, le=249)
+    long_window: int = Field(default=60, ge=3, le=250)
+
+    @model_validator(mode="after")
+    def validate_windows(self) -> "BacktestRequest":
         if self.short_window >= self.long_window:
             raise ValueError("短均线周期必须小于长均线周期")
+        return self
+
+
+STRATEGY_FIELDS = {
+    "buy_hold": (),
+    "ma_cross": ("short_window", "long_window"),
+    "macd_cross": ("fast_window", "slow_window", "signal_window"),
+    "rsi_reversal": ("period", "lower", "upper"),
+    "donchian_breakout": ("entry_window", "exit_window"),
+    "bollinger_reversion": ("period", "deviations"),
+}
+
+
+class StrategyConfig(StrictModel):
+    id: Literal[
+        "buy_hold",
+        "ma_cross",
+        "macd_cross",
+        "rsi_reversal",
+        "donchian_breakout",
+        "bollinger_reversion",
+    ]
+    short_window: int = Field(default=20, ge=2, le=249)
+    long_window: int = Field(default=60, ge=3, le=250)
+    fast_window: int = Field(default=12, ge=2, le=250)
+    slow_window: int = Field(default=26, ge=2, le=250)
+    signal_window: int = Field(default=9, ge=2, le=250)
+    period: int = Field(default=14, ge=2, le=250)
+    lower: float = Field(default=30, gt=0, lt=100)
+    upper: float = Field(default=70, gt=0, lt=100)
+    entry_window: int = Field(default=20, ge=2, le=250)
+    exit_window: int = Field(default=10, ge=2, le=250)
+    deviations: float = Field(default=2, ge=0.5, le=5)
+
+    @model_validator(mode="after")
+    def validate_parameters(self) -> "StrategyConfig":
+        if self.model_fields_set - {"id", *STRATEGY_FIELDS[self.id]}:
+            raise ValueError("策略包含不适用的参数")
+        if self.id == "bollinger_reversion" and "period" not in self.model_fields_set:
+            self.period = 20
+        if self.id == "ma_cross" and self.short_window >= self.long_window:
+            raise ValueError("短均线周期必须小于长均线周期")
+        if self.id == "macd_cross" and self.fast_window >= self.slow_window:
+            raise ValueError("MACD快周期必须小于慢周期")
+        if self.id == "rsi_reversal" and self.lower >= self.upper:
+            raise ValueError("RSI下阈值必须小于上阈值")
+        return self
+
+    @model_serializer
+    def serialize(self) -> dict[str, Any]:
+        return {"id": self.id, **{key: getattr(self, key) for key in STRATEGY_FIELDS[self.id]}}
+
+
+class BacktestCompareRequest(BacktestCommonRequest):
+    strategies: list[StrategyConfig] = Field(min_length=1, max_length=6)
+
+    @model_validator(mode="after")
+    def unique_strategies(self) -> "BacktestCompareRequest":
+        if len({item.id for item in self.strategies}) != len(self.strategies):
+            raise ValueError("每种策略最多选择一组参数")
         return self

@@ -1,6 +1,6 @@
 import type { DcaOptions } from "./types";
 
-export function dcaPeriodStart(end: string, years: number, options: DcaOptions): string {
+export function dcaPeriodStart(end: string, years: number, options: Pick<DcaOptions, "calendar_start" | "trading_days">): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(end)) return "";
   const [year, month, day] = end.split("-").map(Number);
   const targetYear = year - years;

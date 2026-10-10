@@ -150,6 +150,30 @@ def test_market_filter_preserves_malformed_codes_for_validation() -> None:
     ]
 
 
+@pytest.mark.parametrize("code", ["T00018.SH", "T600018.SH", "T00018.SZ", "T000018.SZ"])
+def test_market_filter_excludes_special_codes_without_rewriting(code: str) -> None:
+    raw = pl.DataFrame(
+        {
+            "ts_code": [code, "000001.SZ", "600001.SH"],
+            "trade_date": ["20060216"] * 3,
+            "suspend_type": ["S"] * 3,
+        }
+    )
+    frame = normalize("suspend_d", filter_a_share_market(raw), "tushare", "batch")
+    assert frame["stock_code"].to_list() == ["000001.SZ", "600001.SH"]
+    assert frame["trade_date"].to_list() == ["2006-02-16"] * 2
+    assert raw["ts_code"].to_list() == [code, "000001.SZ", "600001.SH"]
+
+
+@pytest.mark.parametrize("code", [None, "", "INVALID.SH", "T0018.SH", "T0000018.SH", "T00018.BJ"])
+def test_market_filter_keeps_invalid_suspension_codes_for_validation(code: str | None) -> None:
+    raw = pl.DataFrame({"ts_code": [code], "trade_date": ["20060216"]})
+    with pytest.raises(ProviderError) as error:
+        normalize("suspend_d", filter_a_share_market(raw), "tushare", "batch")
+    assert error.value.code == "schema_error"
+    assert "股票代码缺失或格式错误" in str(error.value)
+
+
 @pytest.mark.parametrize("price", [None, 0.0, -1.0])
 def test_invalid_a_share_price_identifies_stock_date_and_field(price: float | None) -> None:
     raw = pl.DataFrame(

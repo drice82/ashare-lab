@@ -164,6 +164,43 @@ class ApplicationService:
                 query = query.where(jobs.c.kind == kind)
             return [dict(row) for row in conn.execute(query).mappings()]
 
+    def _cleanup_job_results(self, job_id: str) -> None:
+        results_root = (self.repository.root / "results").resolve()
+        directory = results_root / job_id
+        if directory.parent != results_root or directory.is_symlink():
+            raise ServiceError(503, "cleanup_failed", "结果目录异常，任务未删除")
+        try:
+            shutil.rmtree(directory)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise ServiceError(503, "cleanup_failed", "结果文件清理失败，请重试删除") from exc
+
+    def delete_jobs(self, kind: str) -> dict[str, Any]:
+        """Delete all finished history of one module under the same worker lock."""
+        with self.db.engine.connect() as conn:
+            conn.execute(text("BEGIN IMMEDIATE"))
+            try:
+                rows = conn.execute(
+                    select(jobs.c.id, jobs.c.status).where(jobs.c.kind == kind)
+                ).all()
+                ids = [
+                    row.id
+                    for row in rows
+                    if row.status in {"succeeded", "failed", "cancelled", "partial"}
+                ]
+                for job_id in ids:
+                    self._cleanup_job_results(job_id)
+                if ids:
+                    conn.execute(logs.delete().where(logs.c.job_id.in_(ids)))
+                    conn.execute(checkpoints.delete().where(checkpoints.c.job_id.in_(ids)))
+                    conn.execute(jobs.delete().where(jobs.c.id.in_(ids)))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return {"deleted": True, "ids": ids, "skipped_active": len(rows) - len(ids)}
+
     def delete_job(self, job_id: str, kind: str) -> dict[str, Any]:
         with self.db.engine.connect() as conn:
             conn.execute(text("BEGIN IMMEDIATE"))
@@ -173,18 +210,7 @@ class ApplicationService:
                     raise ServiceError(404, "not_found", "该类型任务不存在")
                 if job["status"] not in {"succeeded", "failed", "cancelled", "partial"}:
                     raise ServiceError(409, "task_active", "请先取消任务，等待任务结束后再删除")
-                results_root = (self.repository.root / "results").resolve()
-                directory = results_root / job_id
-                if directory.parent != results_root or directory.is_symlink():
-                    raise ServiceError(503, "cleanup_failed", "结果目录异常，任务未删除")
-                try:
-                    shutil.rmtree(directory)
-                except FileNotFoundError:
-                    pass
-                except OSError as exc:
-                    raise ServiceError(
-                        503, "cleanup_failed", "结果文件清理失败，请重试删除"
-                    ) from exc
+                self._cleanup_job_results(job_id)
                 conn.execute(logs.delete().where(logs.c.job_id == job_id))
                 conn.execute(checkpoints.delete().where(checkpoints.c.job_id == job_id))
                 conn.execute(jobs.delete().where(jobs.c.id == job_id))

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatFactor,
+  formatResearchParameters,
   formatMoney,
   formatPercent,
   performanceClass,
@@ -35,4 +36,17 @@ describe("统一金融展示", () => {
     expect(factorClass("dividend_yield_ttm", 0.05)).toBe("positive");
     expect(formatPercent(0.123456)).toBe("12.35%");
   });
+});
+
+it("研究参数隐藏嵌套版本且不改写原任务", () => {
+  const parameters = {
+    stock_code: "000001.SZ",
+    data_versions: { daily: "original" },
+    nested: { data_versions: { trade_cal: "old" }, period: 20 },
+  };
+  expect(JSON.parse(formatResearchParameters(parameters))).toEqual({
+    stock_code: "000001.SZ",
+    nested: { period: 20 },
+  });
+  expect(parameters.data_versions.daily).toBe("original");
 });

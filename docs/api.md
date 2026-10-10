@@ -65,3 +65,19 @@ localhost研究接口默认无全站认证，管理接口仍要求独立密码�
 接口沿用 API 访问密钥；同步删除另需 `X-Data-Management-Password`，研究任务删除不要求数据管理密码。
 
 `GET /api/v1/jobs` 新增 `offset`（默认 0，非负），沿用 `limit`（默认20，最大100）及原数组响应，按 created_at、id 降序排列。四类历史页面每页20条，可访问全部旧任务。
+
+四类任务集合路径支持批量 DELETE：`/api/v1/screening/runs`、`/api/v1/backtest/runs`、`/api/v1/dca/runs`、`/api/v1/data/sync`。清除该类型所有分页的已结束任务，保留活动任务；响应 `{"deleted":true,"ids":["任务ID"],"skipped_active":0}`，空历史和重复清空仍返回200。鉴权、数据版本保留与文件清理失败重试语义沿用逐条删除。批量文件清理中断后数据库记录回滚，但已删除文件不能回滚；重试可完成清理。
+
+单股回测汇总新增 `annualized_return`，为单笔初始投入按365天/年的CAGR；完整性不足、零时长或数值溢出返回null。读取旧完整结果时从保存的汇总和参数补算，不改写发布文件。
+
+## 多策略比较
+
+`POST /backtest/compare`返回202，公共字段与原回测相同，但不接受旧strategy/short_window/long_window顶层字段；新增`strategies`（1–6项、ID唯一）。配置为`{id, ...策略适用参数}`，不适用参数拒绝。ID为buy_hold、ma_cross、macd_cross、rsi_reversal、donchian_breakout、bollinger_reversion，参数及预热定义见backtest-rules.md。周期2–250，双均线沿用2≤短<长≤250；MACD快<慢；RSI 0<lower<upper<100；deviations为0.5–5。NaN/Infinity禁止。
+
+`GET /backtest/options`保留原defaults/strategies，新增comparison_defaults.strategies及comparison_strategies（默认参数、预热日数、参数名称、范围和步长）。比较任务仍为kind=backtest，详情/历史/取消/删除沿用原入口。
+
+`GET /backtest/runs/{id}/results`：旧任务保持原响应；比较任务返回mode=comparison、summary（complete/strategy_count/complete_count）、strategies（strategy_id/label/parameters/summary/curve/warnings/assumptions/excess_return及版本）、公共参数、数据版本、fixture_mode。curve新增return_rate/drawdown；excess_return为比例差，前端乘100展示百分点。比较概览不返回完整账本和K线。
+
+`GET /backtest/runs/{id}/strategies/{strategy_id}?page=1&page_size=50`返回对应策略汇总/曲线、prices（未复权OHLC）、trades（完整买卖记录）及分页items/total/page/page_size。未知策略或旧单策略任务返回404；未发布返回409，分页大小最大200。
+
+`GET /backtest/runs/{id}/export?view=summary|curves|ledger`导出全部策略对应CSV，默认ledger；非法view返回422。旧任务导出格式保持原样。

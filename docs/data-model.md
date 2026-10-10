@@ -50,3 +50,7 @@ stock_basic新增可选字符串cnspell（供应商拼音首字母）；已有�
 ## V0.3 回测结果
 
 jobs新增kind=backtest，payload为BacktestRequest，snapshot固定完整data_versions、_backtest_version/_strategy_version/_universe_policy。result保存summary、warnings、engine_version及不可变JSON引用；完整文件保存逐日curve、ledger、参数、假设和strategy_version。不新增表，持仓批次和分红税负仅在领域计算中构造，恢复按原版本重算。账本字段与汇总见api.md和backtest-rules.md。
+
+## 多策略结果
+
+新增回测JSON变体`mode: comparison`，公共metadata固定参数、数据版本、fixture_mode及comparison_version；summary记录策略数量、完整数量和整体完整性。strategies数组分别保存strategy_id、label、策略参数/版本、summary、curve、ledger、warnings、assumptions及excess_return。prices保存回测区间原始OHLC供K线使用；不作为信号输入回读。curve中return_rate为总资产/初始资金−1，drawdown为总资产/max(初始资金,截至当日资产峰值)−1。不新增数据库表，不改变旧结果结构。

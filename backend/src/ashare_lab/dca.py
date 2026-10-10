@@ -7,7 +7,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from math import exp, expm1, isfinite, log
 from typing import Any
 
-from ashare_lab.schemas import BacktestRequest, DcaRequest
+from ashare_lab.schemas import BacktestCommonRequest, DcaRequest
 from ashare_lab.warehouse import MarketRepository
 
 DCA_VERSION = "1.0.1"
@@ -23,7 +23,9 @@ def money(value: Decimal) -> Decimal:
     return value.quantize(CENT, rounding=ROUND_HALF_UP)
 
 
-def prepare(request: DcaRequest | BacktestRequest, repository: MarketRepository) -> dict[str, Any]:
+def prepare(
+    request: DcaRequest | BacktestCommonRequest, repository: MarketRepository
+) -> dict[str, Any]:
     """Read only the pinned versions; no current-head fallback."""
     snapshot = request.data_versions
     start, end = request.start_date.isoformat(), request.end_date.isoformat()
@@ -114,6 +116,42 @@ def confirmed_events(
         seen[key] = signature
         active[key] = event
     return active, problem
+
+
+def check_factor_change(
+    current_factor: Decimal,
+    previous_factor: Decimal | None,
+    observed_factor: Decimal | None,
+    last_price: Decimal | None,
+    reference: Any,
+    cash_per_share: Decimal,
+    day: str,
+) -> tuple[Decimal, Decimal, str | None, str | None]:
+    """Validate against the last verified anchor; tolerated drift never resets it."""
+    problem = warning = None
+    keep_factor_anchor = False
+    if previous_factor is not None and current_factor != observed_factor:
+        if (
+            cash_per_share == 0
+            and last_price is not None
+            and reference is not None
+            and decimal(reference) == last_price
+            and abs(current_factor / previous_factor - 1) <= Decimal("0.001")
+        ):
+            keep_factor_anchor = True
+            warning = (
+                f"{day}：复权因子微小变化在0.1%容差内且前收盘参考价连续；"
+                "按原始价格继续计算，不推定额外分红或送转股"
+            )
+        elif last_price is None or cash_per_share <= 0 or last_price <= cash_per_share:
+            problem = "无法解释的复权因子变化，可能存在未支持的公司行动"
+        else:
+            expected = last_price / (last_price - cash_per_share)
+            if abs(current_factor / previous_factor / expected - 1) > Decimal("0.001"):
+                problem = "复权因子变化与已确认现金分红不一致"
+    if not keep_factor_anchor and current_factor != observed_factor:
+        previous_factor = current_factor
+    return previous_factor or current_factor, current_factor, problem, warning
 
 
 def performance_metrics(curve: list[dict[str, Any]]) -> tuple[float | None, float | None]:
@@ -255,38 +293,20 @@ def simulate(
         active, event_problem = confirmed_events(market["events"], day, start, seen)
         problem = event_problem or problem
         if not problem and factor_value is not None:
-            current_factor = decimal(factor_value)
-            keep_factor_anchor = False
-            if previous_factor is not None and current_factor != observed_factor:
-                cash_per_share = sum(
+            previous_factor, observed_factor, problem, warning = check_factor_change(
+                decimal(factor_value),
+                previous_factor,
+                observed_factor,
+                last_price,
+                bar.get("pre_close") if bar and not suspended else None,
+                sum(
                     (decimal(e["cash_div_tax"]) for e in active.values() if e["ex_date"] == day),
                     ZERO,
-                )
-                reference = bar.get("pre_close") if bar and not suspended else None
-                if (
-                    cash_per_share == 0
-                    and last_price is not None
-                    and reference is not None
-                    and decimal(reference) == last_price
-                    and abs(current_factor / previous_factor - 1) <= Decimal("0.001")
-                ):
-                    # Keep the last verified anchor so repeated small changes cannot
-                    # conceal a material cumulative unexplained adjustment.
-                    keep_factor_anchor = True
-                    if current_factor != observed_factor:
-                        warnings.append(
-                            f"{day}：复权因子微小变化在0.1%容差内且前收盘参考价连续；"
-                            "按原始价格继续计算，不推定额外分红或送转股"
-                        )
-                elif last_price is None or cash_per_share <= 0 or last_price <= cash_per_share:
-                    problem = "无法解释的复权因子变化，可能存在未支持的公司行动"
-                else:
-                    expected = last_price / (last_price - cash_per_share)
-                    if abs(current_factor / previous_factor / expected - 1) > Decimal("0.001"):
-                        problem = "复权因子变化与已确认现金分红不一致"
-            if not keep_factor_anchor and current_factor != observed_factor:
-                previous_factor = current_factor
-            observed_factor = current_factor
+                ),
+                day,
+            )
+            if warning:
+                warnings.append(warning)
         up = market["limits"].get(day, {}).get("up_limit")
         if (
             not problem

@@ -35,6 +35,7 @@ export interface ScreeningDefinition {
   parameters: Parameters;
 }
 export interface Job {
+  snapshot?: Record<string, string>;
   id: string;
   kind: "sync" | "screening";
   status: string;
@@ -267,6 +268,7 @@ export interface BacktestJob extends Omit<Job, "kind" | "payload" | "result"> {
   result: (BacktestSummary & { warnings: string[] }) | null;
 }
 export interface BacktestOptions extends Omit<DcaOptions, "defaults"> {
+  comparison_defaults?: { strategies: import("./comparison").StrategyConfig[] };
   defaults: Omit<BacktestDefinition, "stock_code" | "start_date" | "end_date" | "data_versions">;
 }
 export interface BacktestResults extends Omit<DcaResults, "summary" | "items" | "parameters"> {
@@ -274,4 +276,4 @@ export interface BacktestResults extends Omit<DcaResults, "summary" | "items" | 
   items: (DcaRow & { signal_date: string | null; tax: number })[];
   parameters: BacktestDefinition;
 }
-export type ResearchJob = Job | DcaJob | BacktestJob;
+export type ResearchJob = Job | DcaJob | BacktestJob | import("./comparison").ComparisonJob;

@@ -1,8 +1,9 @@
 import fcntl
 import json
 import os
+import signal
 import threading
-import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ from sqlalchemy import select, text
 from ashare_lab.backtest import BACKTEST_VERSION, STRATEGY_VERSION
 from ashare_lab.backtest import prepare as prepare_backtest
 from ashare_lab.backtest import simulate as simulate_backtest
+from ashare_lab.comparison import COMPARISON_VERSION, prepare_comparison, simulate_comparison
 from ashare_lab.config import Settings
 from ashare_lab.db import Database, identifier, jobs, now
 from ashare_lab.dca import DCA_VERSION, prepare, simulate
@@ -26,7 +28,7 @@ from ashare_lab.scheduler import (
     MonthlyNameScheduler,
     create_scheduler,
 )
-from ashare_lab.schemas import BacktestRequest, DcaRequest, ScreeningRequest
+from ashare_lab.schemas import BacktestCompareRequest, BacktestRequest, DcaRequest, ScreeningRequest
 from ashare_lab.screening import ScreeningEngine
 from ashare_lab.sync import SyncService
 from ashare_lab.warehouse import MarketRepository
@@ -43,6 +45,7 @@ class Worker:
         self.db.initialize()
         self.repository = MarketRepository(self.db, settings.data_dir)
         self.provider = provider or TushareProvider(settings)
+        self._stopping = threading.Event()
 
     def check(self, job_id: str) -> None:
         if self.db.is_cancelled(job_id):
@@ -91,21 +94,22 @@ class Worker:
                     connection=conn,
                 )
 
-    def run_once(self) -> bool:
+    def claim_job(self, sync: bool | None = None) -> dict[str, Any] | None:
+        """Claim one queued task, optionally restricting it to an execution lane."""
         with self.db.engine.begin() as conn:
             conn.execute(text("BEGIN IMMEDIATE"))
-            row = (
-                conn.execute(
-                    select(jobs)
-                    .where(jobs.c.status == "queued")
-                    .order_by(jobs.c.created_at)
-                    .limit(1)
+            statement = select(jobs).where(jobs.c.status == "queued")
+            if sync is not None:
+                statement = statement.where(
+                    jobs.c.kind == "sync" if sync else jobs.c.kind != "sync"
                 )
+            row = (
+                conn.execute(statement.order_by(jobs.c.created_at, jobs.c.id).limit(1))
                 .mappings()
                 .first()
             )
             if row is None:
-                return False
+                return None
             job = dict(row)
             conn.execute(
                 jobs.update()
@@ -114,6 +118,16 @@ class Worker:
                     status="running", heartbeat=now(), updated_at=now(), attempt=job["attempt"] + 1
                 )
             )
+        return job
+
+    def run_once(self) -> bool:
+        job = self.claim_job()
+        if job is None:
+            return False
+        self.execute_job(job)
+        return True
+
+    def execute_job(self, job: dict[str, Any]) -> None:
         job_id = job["id"]
         stopped = threading.Event()
 
@@ -123,11 +137,29 @@ class Worker:
 
         thread = threading.Thread(target=heartbeat, daemon=True)
         thread.start()
+        completion_prepared = False
+
+        def before_complete() -> None:
+            # History publication commits success and its final log atomically.
+            # Stop all task writes first: the API may delete as soon as it commits.
+            nonlocal completion_prepared
+            stopped.set()
+            thread.join()
+            completion_prepared = True
 
         def finish(status: str, level: str, message: str, **values: Any) -> None:
             stopped.set()
             thread.join()
             with self.db.engine.begin() as conn:
+                conn.execute(text("BEGIN IMMEDIATE"))
+                if (
+                    status in {"succeeded", "partial"}
+                    and conn.execute(
+                        select(jobs.c.cancel_requested).where(jobs.c.id == job_id)
+                    ).scalar_one()
+                ):
+                    status, level, message = ("cancelled", "warning", "任务已取消，已发布数据保留")
+                    values = {}
                 conn.execute(
                     jobs.update()
                     .where(jobs.c.id == job_id)
@@ -140,26 +172,53 @@ class Worker:
             if job["kind"] == "sync":
                 result = SyncService(
                     self.db, self.repository, self.provider, self.settings.sync_concurrency
-                ).run(job, lambda: self.check(job_id))
+                ).run(job, lambda: self.check(job_id), before_complete=before_complete)
+                if completion_prepared:
+                    return
                 status = "partial" if result["warnings"] else "succeeded"
             elif job["kind"] in {"dca", "backtest"}:
                 backtest = job["kind"] == "backtest"
+                comparison = backtest and "strategies" in job["payload"]
                 engine_version = BACKTEST_VERSION if backtest else DCA_VERSION
                 version_key = "_backtest_version" if backtest else "_dca_version"
                 if job["snapshot"].get(version_key) != engine_version or (
-                    backtest and job["snapshot"].get("_strategy_version") != STRATEGY_VERSION
+                    backtest
+                    and not comparison
+                    and job["snapshot"].get("_strategy_version") != STRATEGY_VERSION
                 ):
                     raise ProviderError(
                         "incompatible_engine_version", "研究引擎版本不兼容，请使用对应版本执行"
                     )
                 request_dca = DcaRequest.model_validate(job["payload"]) if not backtest else None
                 request_backtest = (
-                    BacktestRequest.model_validate(job["payload"]) if backtest else None
+                    BacktestRequest.model_validate(job["payload"])
+                    if backtest and not comparison
+                    else None
                 )
                 pinned = {k: v for k, v in job["snapshot"].items() if not k.startswith("_")}
                 if job["payload"]["data_versions"] != pinned:
                     raise ProviderError("invalid_version", "研究任务参数与固定快照不一致")
-                if request_backtest is not None:
+                if comparison:
+                    request_compare = BacktestCompareRequest.model_validate(job["payload"])
+                    if job["snapshot"].get("_comparison_version") != COMPARISON_VERSION or any(
+                        job["snapshot"].get(f"_strategy_version_{item.id}")
+                        != (
+                            STRATEGY_VERSION
+                            if item.id in {"buy_hold", "ma_cross"}
+                            else COMPARISON_VERSION
+                        )
+                        for item in request_compare.strategies
+                    ):
+                        raise ProviderError(
+                            "incompatible_engine_version", "比较引擎或策略版本不兼容"
+                        )
+                    output = simulate_comparison(
+                        request_compare,
+                        prepare_comparison(request_compare, self.repository),
+                        lambda: self.check(job_id),
+                        lambda value: self.db.update(job_id, progress=value * 0.95),
+                    )
+                elif request_backtest is not None:
                     output = simulate_backtest(
                         request_backtest,
                         prepare_backtest(request_backtest, self.repository),
@@ -316,7 +375,62 @@ class Worker:
         finally:
             stopped.set()
             thread.join(timeout=3)
-        return True
+
+    def stop(self) -> None:
+        """Stop dispatching; already submitted tasks drain before releasing the lock."""
+        self._stopping.set()
+
+    def _release_claim(self, job: dict[str, Any]) -> None:
+        # Submission has not started execution. Preserve any concurrent cancellation
+        # request; execute_job will honour it when the task is next claimed.
+        with self.db.engine.begin() as conn:
+            conn.execute(text("BEGIN IMMEDIATE"))
+            row = conn.execute(select(jobs).where(jobs.c.id == job["id"])).mappings().first()
+            if row is None or row["status"] not in {"running", "cancel_requested"}:
+                return
+            status = "cancelled" if row["cancel_requested"] else "queued"
+            conn.execute(
+                jobs.update()
+                .where(jobs.c.id == job["id"])
+                .values(status=status, heartbeat=None, attempt=job["attempt"], updated_at=now())
+            )
+            if status == "cancelled":
+                self.db.log(job["id"], "warning", "任务执行前已取消", connection=conn)
+
+    def run_loop(self) -> None:
+        """Dispatch bounded lanes. Startup recovery and ownership belong to serve()."""
+        research_limit = self.settings.worker_research_concurrency
+        with (
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="sync-job") as sync_pool,
+            ThreadPoolExecutor(
+                max_workers=research_limit, thread_name_prefix="research-job"
+            ) as research_pool,
+        ):
+            lanes = [(True, sync_pool, 1), (False, research_pool, research_limit)]
+            active: dict[bool, set[Future[None]]] = {True: set(), False: set()}
+            while not self._stopping.is_set():
+                for sync, pool, limit in lanes:
+                    for future in tuple(active[sync]):
+                        if future.done():
+                            active[sync].remove(future)
+                            future.result()
+                    while len(active[sync]) < limit and not self._stopping.is_set():
+                        job = self.claim_job(sync=sync)
+                        if job is None:
+                            break
+                        if self._stopping.is_set():
+                            self._release_claim(job)
+                            break
+                        try:
+                            active[sync].add(pool.submit(self.execute_job, job))
+                        except BaseException:
+                            self._release_claim(job)
+                            raise
+                self._stopping.wait(self.settings.worker_poll_seconds)
+            # Surface executor errors even when shutdown happens before the next poll.
+            for futures in active.values():
+                for future in futures:
+                    future.result()
 
     def serve(self, once: bool = False) -> None:
         lock_path: Path = self.settings.database_path.with_suffix(".worker.lock")
@@ -327,7 +441,15 @@ class Worker:
                 raise RuntimeError("同一数据库只允许一个 Worker") from exc
             self.recover()
             scheduler = None
-            if not once:
+            previous_signals: dict[signal.Signals, Any] = {}
+            try:
+                if once:
+                    self.run_once()
+                    return
+                if threading.current_thread() is threading.main_thread():
+                    for sig in (signal.SIGINT, signal.SIGTERM):
+                        previous_signals[sig] = signal.getsignal(sig)
+                        signal.signal(sig, lambda _sig, _frame: self.stop())
                 DailyDividendScheduler(self.settings, self.db, self.repository).tick()
                 MonthlyNameScheduler(self.settings, self.db, self.repository).tick()
                 MonthlyDividendScheduler(self.settings, self.db, self.repository).tick()
@@ -335,13 +457,9 @@ class Worker:
                 DailyIncrementalScheduler(self.settings, self.db, self.repository).tick()
                 scheduler = create_scheduler(self.settings, self.db, self.repository)
                 scheduler.start()
-            try:
-                while True:
-                    ran = self.run_once()
-                    if once:
-                        return
-                    if not ran:
-                        time.sleep(self.settings.worker_poll_seconds)
+                self.run_loop()
             finally:
                 if scheduler is not None:
                     scheduler.shutdown(wait=True)
+                for sig, previous in previous_signals.items():
+                    signal.signal(sig, previous)

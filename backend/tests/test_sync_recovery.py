@@ -243,6 +243,82 @@ def test_optional_permission_failure_is_partial_not_success(tmp_path: Path) -> N
     assert "adj_factor" not in service.db.snapshot()
 
 
+@pytest.mark.parametrize("after_publish", [False, True])
+def test_special_suspension_codes_failure_resume_and_old_versions(
+    tmp_path: Path, after_publish: bool
+) -> None:
+    class SpecialCodeProvider(MiniProvider):
+        malformed = True
+
+        def fetch(self, dataset: str, params: dict[str, str]) -> pl.DataFrame:
+            if dataset != "suspend_d":
+                return super().fetch(dataset, params)
+            self.calls.append((dataset, params))
+            codes = ["000001.SZ", "T00018.SH", "T600018.SH"]
+            if self.malformed and params["trade_date"] == "20240628":
+                codes.append("INVALID.SH")
+            return pl.DataFrame(
+                {
+                    "ts_code": codes,
+                    "trade_date": [params["trade_date"]] * len(codes),
+                    "suspend_type": ["S"] * len(codes),
+                }
+            )
+
+    settings = Settings(_env_file=None, data_dir=tmp_path, database_path=tmp_path / "business.db")
+    service = ApplicationService(settings)
+    provider = SpecialCodeProvider()
+    worker = Worker(settings, provider)
+    request = SyncRequest(mode="initialize", start_date="2024-06-27", end_date="2024-06-28")
+    job = service.submit_sync(request)
+    worker.run_once()
+    assert service.job(job["id"])["status"] == "failed"
+    assert service.db.completed(job["id"], "suspend_d:2024-06-27")
+    assert not service.db.completed(job["id"], "suspend_d:2024-06-28")
+    old_snapshot = service.db.snapshot()
+    old_rows = service.repository.read("suspend_d", old_snapshot).to_dicts()
+    assert [(r["stock_code"], r["trade_date"]) for r in old_rows] == [("000001.SZ", "2024-06-27")]
+
+    provider.malformed = False
+    publish = worker.repository.publish
+
+    def interrupt(*args: Any, **kwargs: Any) -> str:
+        if args[0] == "suspend_d" and args[2] == "2024-06-28":
+            if after_publish:
+                publish(*args, **kwargs)
+            raise OSError("simulated interruption")
+        return publish(*args, **kwargs)
+
+    service.resume(job["id"])
+    with patch.object(worker.repository, "publish", side_effect=interrupt):
+        worker.run_once()
+    assert service.job(job["id"])["status"] == "failed"
+    assert service.db.completed(job["id"], "suspend_d:2024-06-28") == after_publish
+
+    provider.calls.clear()
+    service.resume(job["id"])
+    worker.run_once()
+    assert service.job(job["id"])["status"] == "succeeded"
+    suspension_calls = [p["trade_date"] for d, p in provider.calls if d == "suspend_d"]
+    assert suspension_calls == ([] if after_publish else ["20240628"])
+    current = service.repository.read("suspend_d", service.db.snapshot())
+    assert sorted(zip(current["stock_code"], current["trade_date"], strict=True)) == [
+        ("000001.SZ", "2024-06-27"),
+        ("000001.SZ", "2024-06-28"),
+    ]
+    assert service.repository.read("suspend_d", old_snapshot).to_dicts() == old_rows
+    assert any(
+        "suspend_d 2024-06-27: 排除 2 行范围外证券" in r["message"]
+        for r in service.job(job["id"])["logs"]
+    )
+
+    repeated = service.submit_sync(request)
+    worker.run_once()
+    assert service.job(repeated["id"])["status"] == "succeeded"
+    assert service.repository.read("suspend_d", service.db.snapshot()).height == 2
+    assert service.repository.read("suspend_d", old_snapshot).to_dicts() == old_rows
+
+
 def test_failed_file_publication_keeps_old_manifest(tmp_path: Path) -> None:
     from ashare_lab.warehouse import MarketRepository
 

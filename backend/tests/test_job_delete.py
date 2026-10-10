@@ -78,6 +78,82 @@ def test_active_tasks_cannot_be_deleted(system, status):
     assert service.db.job(job["id"])["status"] == status
 
 
+@pytest.mark.parametrize("kind", ["sync", "screening", "dca", "backtest"])
+def test_bulk_delete_all_pages_preserves_active_other_kinds_and_versions(system, kind):
+    client, service, settings = system
+    snapshot = service.db.snapshot()
+    ids = []
+    for index in range(25):
+        job = service.db.enqueue(kind, {})
+        ids.append(job["id"])
+        service.db.update(
+            job["id"], status=["succeeded", "failed", "cancelled", "partial"][index % 4]
+        )
+        service.db.log(job["id"], "info", "test")
+    directory = settings.data_dir / "results" / ids[0]
+    directory.mkdir(parents=True)
+    (directory / "result.json").write_text("{}")
+    active = [service.db.enqueue(kind, {}) for _ in range(3)]
+    for job, status in zip(active, ["queued", "running", "cancel_requested"], strict=True):
+        service.db.update(job["id"], status=status)
+    other = service.db.enqueue("dca" if kind != "dca" else "backtest", {})
+    service.db.update(other["id"], status="failed")
+    route = path(kind, "").rstrip("/")
+    response = client.delete(route)
+    assert response.status_code == 200, response.text
+    assert set(response.json()["ids"]) == set(ids)
+    assert response.json()["skipped_active"] == 3
+    assert len(service.task_list(kind)) == 3
+    assert service.db.job(other["id"])
+    assert not directory.exists()
+    assert service.db.snapshot() == snapshot
+    assert service.repository.read("daily", snapshot).height > 0
+    assert client.delete(route).json()["ids"] == []
+
+
+def test_bulk_delete_cleanup_failure_can_retry_and_requires_management_password(system):
+    client, service, settings = system
+    job = service.db.enqueue("sync", {})
+    service.db.update(job["id"], status="failed")
+    directory = settings.data_dir / "results" / job["id"]
+    directory.mkdir(parents=True)
+    route = "/api/v1/data/sync"
+    assert client.delete(route, headers={"X-Data-Management-Password": ""}).status_code == 403
+    with patch("ashare_lab.services.shutil.rmtree", side_effect=OSError("test")):
+        assert client.delete(route).status_code == 503
+    assert service.db.job(job["id"])
+    assert client.delete(route).json()["ids"] == [job["id"]]
+
+
+def test_bulk_cleanup_interruption_keeps_rows_for_restart_and_retry(system):
+    client, service, settings = system
+    ids = []
+    for _ in range(2):
+        job = service.db.enqueue("backtest", {})
+        ids.append(job["id"])
+        service.db.update(job["id"], status="failed")
+        directory = settings.data_dir / "results" / job["id"]
+        directory.mkdir(parents=True)
+        (directory / "result.json").write_text("{}")
+    original = service._cleanup_job_results
+    calls = 0
+
+    def interrupt(job_id):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("simulated interruption")
+        original(job_id)
+
+    with patch.object(service, "_cleanup_job_results", side_effect=interrupt):
+        with pytest.raises(OSError):
+            service.delete_jobs("backtest")
+    assert len(service.task_list("backtest")) == 2
+    Worker(settings).recover()
+    assert set(client.delete("/api/v1/backtest/runs").json()["ids"]) == set(ids)
+    assert service.task_list("backtest") == []
+
+
 def test_type_auth_and_cleanup_retry(system):
     client, service, settings = system
     job = service.db.enqueue("sync", {})

@@ -9,7 +9,7 @@ from typing import Any
 
 import duckdb
 import polars as pl
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.sqlite import insert
 
 from ashare_lab.db import (
@@ -323,6 +323,10 @@ class MarketRepository:
         with self.db.engine.begin() as conn:
             from ashare_lab.statistics import FORMAT_VERSION
 
+            if complete_job:
+                # Reserve the write transaction before the final cancellation
+                # check, including empty observation publications with no files.
+                conn.execute(text("BEGIN IMMEDIATE"))
             for path, value in file_statistics.items():
                 conn.execute(
                     insert(partition_statistics)
@@ -388,6 +392,7 @@ class MarketRepository:
                         status="succeeded", progress=1, result=result, error=None, updated_at=now()
                     )
                 )
+                self.db.log(complete_job[0], "info", "任务已完成", connection=conn)
         return version_id
 
     def coverage(self, dataset: str, snapshot: dict[str, str]) -> dict[str, Any]:

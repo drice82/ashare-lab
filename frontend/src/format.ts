@@ -86,3 +86,12 @@ export const statusLabels: Record<string, string> = {
 };
 export const activeJob = (status: string) =>
   ["queued", "running", "cancel_requested"].includes(status);
+
+/** Research UI omits internal dataset identifiers, including nested job parameters. */
+export function formatResearchParameters(parameters: unknown): string {
+  return JSON.stringify(
+    parameters,
+    (key, value: unknown) => (key === "data_versions" ? undefined : value),
+    2,
+  );
+}

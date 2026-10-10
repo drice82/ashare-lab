@@ -1,3 +1,4 @@
+import StockIdentity from "./StockIdentity";
 import { ArrowUpRight, Clock3, LoaderCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { statusLabels } from "../format";
@@ -7,7 +8,7 @@ export function ErrorBanner({ message }: { message?: string }) {
   return message ? (
     <div
       role="alert"
-      className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+      className={`rounded-lg border px-4 py-3 text-sm ${message.includes("复权因子微小变化") && message.includes("容差内") ? "border-orange-200 bg-orange-50 text-orange-800" : "border-red-200 bg-red-50 text-red-800"}`}
     >
       {message}
     </div>
@@ -68,15 +69,46 @@ export function TaskTable({
           {jobs.map((job) => (
             <tr key={job.id}>
               <td>
-                {job.kind === "dca"
-                  ? `定投 ${job.payload.stock_code}`
-                  : job.kind === "backtest"
-                    ? `回测 ${job.payload.stock_code}`
-                  : job.kind === "screening"
-                    ? `规则 ${job.payload.rule_id} · ${job.payload.as_of_date}`
-                    : job.payload.mode === "namechange"
-                      ? "历史名称更新"
-                      : "市场数据同步"}
+                {job.kind === "dca" ? (
+                  <>
+                    定投{" "}
+                    <StockIdentity
+                      code={job.payload.stock_code}
+                      date={job.payload.start_date}
+                      version={job.payload.data_versions?.stock_basic}
+                    />
+                  </>
+                ) : job.kind === "backtest" ? (
+                  <>
+                    回测{" "}
+                    <StockIdentity
+                      code={job.payload.stock_code}
+                      date={job.payload.start_date}
+                      version={job.payload.data_versions?.stock_basic}
+                    />
+                  </>
+                ) : job.kind === "screening" ? (
+                  `规则 ${job.payload.rule_id} · ${job.payload.as_of_date}`
+                ) : job.payload.mode === "namechange" ? (
+                  "历史名称更新"
+                ) : (
+                  "市场数据同步"
+                )}
+                {job.kind === "screening" && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {job.payload.universe?.type === "custom"
+                      ? job.payload.universe.codes.map((code) => (
+                          <span className="mr-3" key={code}>
+                            <StockIdentity
+                              code={code}
+                              date={job.payload.as_of_date}
+                              version={job.snapshot?.stock_basic}
+                            />
+                          </span>
+                        ))
+                      : "沪深 A 股股票池"}
+                  </p>
+                )}
                 {(job.kind === "dca" || job.kind === "backtest") && (
                   <p className="mt-1 text-xs text-muted-foreground">
                     {job.payload.start_date} 至 {job.payload.end_date}
@@ -118,10 +150,28 @@ export function TaskTable({
                     <ArrowUpRight size={14} />
                   </Link>
                 )}
-                {onDelete && <button className="ml-4 text-red-700 disabled:opacity-40"
-                  aria-label={`删除任务 ${job.id}`} disabled={deleting || !["succeeded", "failed", "cancelled", "partial"].includes(job.status)}
-                  title={["succeeded", "failed", "cancelled", "partial"].includes(job.status) ? "永久删除任务" : "请先取消任务，等待任务结束后再删除"}
-                  onClick={() => onDelete(job)}>删除</button>}
+                {onDelete && (
+                  <button
+                    className="ml-4 text-red-700 disabled:opacity-40"
+                    aria-label={`删除任务 ${job.id}`}
+                    disabled={
+                      deleting ||
+                      !["succeeded", "failed", "cancelled", "partial"].includes(
+                        job.status,
+                      )
+                    }
+                    title={
+                      ["succeeded", "failed", "cancelled", "partial"].includes(
+                        job.status,
+                      )
+                        ? "永久删除任务"
+                        : "请先取消任务，等待任务结束后再删除"
+                    }
+                    onClick={() => onDelete(job)}
+                  >
+                    删除
+                  </button>
+                )}
               </td>
             </tr>
           ))}

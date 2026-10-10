@@ -1,16 +1,8 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import {
-  Database,
-  Filter,
-  FlaskConical,
-  LayoutDashboard,
-  Menu,
-  Shield,
-  X,
-} from "lucide-react";
-import { Link, NavLink, Route, Routes } from "react-router-dom";
+import { Database, Filter, FlaskConical, Menu, Shield, X } from "lucide-react";
+import { Link, NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { setAccessToken } from "./api";
-import Dashboard from "./pages/Dashboard";
+
 import DataManagement from "./pages/DataManagement";
 import Screening from "./pages/Screening";
 import { Loading } from "./components/common";
@@ -22,11 +14,10 @@ const Backtest = lazy(() => import("./pages/Backtest"));
 const StockDetail = lazy(() => import("./pages/StockDetail"));
 
 const navigation = [
-  { to: "/", label: "研究概览", icon: LayoutDashboard },
-  { to: "/data", label: "数据管理", icon: Database },
   { to: "/screening", label: "股票筛选", icon: Filter },
   { to: "/dca", label: "定投模拟", icon: FlaskConical },
   { to: "/backtest", label: "单股回测", icon: FlaskConical },
+  { to: "/data", label: "数据管理", icon: Database },
 ];
 export default function App() {
   const [menu, setMenu] = useState(false);
@@ -54,9 +45,9 @@ export default function App() {
             <FlaskConical size={20} />
           </span>
           <span className="text-lg font-semibold tracking-tight text-white">
-            ashare<span className="font-normal text-[#a9bd9b]"> / lab</span>
+            ashare-lab
             <span className="mt-1 block text-[10px] font-normal tracking-[.15em] text-[#98b099]">
-              A 股量化研究工作台
+              研究工作台
             </span>
           </span>
         </Link>
@@ -139,7 +130,7 @@ export default function App() {
         <main className="mx-auto max-w-[1600px] p-5 md:p-9" key={revision}>
           <Suspense fallback={<Loading />}>
             <Routes>
-              <Route path="/" element={<Dashboard />} />
+              <Route path="/" element={<Navigate to="/screening" replace />} />
               <Route path="/data" element={<DataManagement />} />
               <Route path="/screening" element={<Screening />} />
               <Route path="/dca" element={<Dca />} />

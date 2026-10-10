@@ -6,6 +6,26 @@ import { TaskHistory } from "./TaskHistory";
 const job = { id: "old-job", kind: "screening", status: "failed", progress: 0,
   created_at: "2024-01-01", payload: {rule_id: "A", as_of_date: "2024-01-01"}, result: null };
 beforeEach(() => { vi.stubGlobal("fetch", vi.fn()); });
+it.each(["sync", "screening", "dca", "backtest"])("一键清空 %s 全部历史并回调非当前页任务", async (kind) => {
+  let deleted = false;
+  vi.mocked(fetch).mockImplementation(async (_url, options) => {
+    if (options?.method === "DELETE") {
+      deleted = true;
+      return Response.json({deleted:true, ids:["old-job", "other-page"], skipped_active:1});
+    }
+    return Response.json(deleted ? [] : [{...job, kind}]);
+  });
+  const onDeleted = vi.fn();
+  render(<MemoryRouter><TaskHistory kind={kind as "sync"} onDeleted={onDeleted} /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole("button", {name:"删除全部历史任务"}));
+  expect(screen.getByRole("dialog")).toHaveTextContent("所有分页");
+  expect(vi.mocked(fetch).mock.calls.every(([,o]) => o?.method !== "DELETE")).toBe(true);
+  fireEvent.click(screen.getByRole("button", {name:"确认删除全部"}));
+  await waitFor(() => expect(onDeleted).toHaveBeenCalledWith("other-page"));
+  expect(onDeleted).toHaveBeenCalledWith("old-job");
+  expect(vi.mocked(fetch).mock.calls.find(([,o]) => o?.method === "DELETE")?.[0]).toBe(`/api/v1/${kind === "sync" ? "data/sync" : `${kind}/runs`}`);
+  expect(await screen.findByText(/保留了 1 个活动任务/)).toBeInTheDocument();
+});
 it.each(["sync", "screening", "dca", "backtest"])("删除 %s 历史并回调清除详情", async (kind) => {
   let deleted = false;
   vi.mocked(fetch).mockImplementation(async (_url, options) => {

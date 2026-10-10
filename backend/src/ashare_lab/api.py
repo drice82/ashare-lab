@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse, Response
 
 from ashare_lab.config import Settings
 from ashare_lab.schemas import (
+    BacktestCompareRequest,
     BacktestRequest,
     DcaRequest,
     PresetRequest,
@@ -99,6 +100,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def sync(request: SyncRequest) -> dict[str, Any]:
         return service.submit_sync(request)
 
+    @app.delete("/api/v1/data/sync")
+    def delete_all_sync() -> dict[str, Any]:
+        return service.delete_jobs("sync")
+
     @app.delete("/api/v1/data/sync/{job_id}")
     def delete_sync(job_id: str) -> dict[str, Any]:
         return service.delete_job(job_id, "sync")
@@ -138,6 +143,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/v1/screening/run", status_code=202)
     def screening(request: ScreeningRequest) -> dict[str, Any]:
         return service.submit_screen(request)
+
+    @app.delete("/api/v1/screening/runs")
+    def delete_all_screening() -> dict[str, Any]:
+        return service.delete_jobs("screening")
 
     @app.delete("/api/v1/screening/runs/{job_id}")
     def delete_screening(job_id: str) -> dict[str, Any]:
@@ -205,6 +214,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def backtest_run(request: BacktestRequest) -> dict[str, Any]:
         return service.backtest.submit_backtest(request)
 
+    @app.post("/api/v1/backtest/compare", status_code=202)
+    def backtest_compare(request: BacktestCompareRequest) -> dict[str, Any]:
+        return service.backtest.submit_comparison(request)
+
+    @app.get("/api/v1/backtest/runs/{job_id}/strategies/{strategy_id}")
+    def backtest_strategy(
+        job_id: str,
+        strategy_id: str,
+        page: int = Query(1, ge=1),
+        page_size: int = Query(50, ge=1, le=200),
+    ) -> dict[str, Any]:
+        return service.backtest.strategy_detail(job_id, strategy_id, page, page_size)
+
+    @app.delete("/api/v1/backtest/runs")
+    def delete_all_backtest() -> dict[str, Any]:
+        return service.delete_jobs("backtest")
+
     @app.delete("/api/v1/backtest/runs/{job_id}")
     def delete_backtest(job_id: str) -> dict[str, Any]:
         return service.delete_job(job_id, "backtest")
@@ -224,9 +250,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return service.backtest.results(job_id, page, page_size)
 
     @app.get("/api/v1/backtest/runs/{job_id}/export")
-    def backtest_export(job_id: str) -> Response:
+    def backtest_export(
+        job_id: str, view: Literal["summary", "curves", "ledger"] = "ledger"
+    ) -> Response:
         return Response(
-            service.backtest.export(job_id),
+            service.backtest.export(job_id, view),
             media_type="text/csv",
             headers={"Content-Disposition": f'attachment; filename="backtest-{job_id}.csv"'},
         )
@@ -234,6 +262,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/v1/dca/run", status_code=202)
     def dca_run(request: DcaRequest) -> dict[str, Any]:
         return service.dca.submit(request)
+
+    @app.delete("/api/v1/dca/runs")
+    def delete_all_dca() -> dict[str, Any]:
+        return service.delete_jobs("dca")
 
     @app.delete("/api/v1/dca/runs/{job_id}")
     def delete_dca(job_id: str) -> dict[str, Any]:

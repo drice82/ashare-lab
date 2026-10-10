@@ -53,7 +53,7 @@ export default function DcaChart({ points }: { points: DcaPoint[] }) {
     }
     chart.timeScale().fitContent();
     const observer = new ResizeObserver((entries) => {
-      if (entries[0])
+      if (entries[0]?.contentRect.width > 0)
         chart.applyOptions({ width: entries[0].contentRect.width });
     });
     observer.observe(element.current);

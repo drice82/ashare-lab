@@ -92,7 +92,7 @@ def filter_a_share_market(frame: pl.DataFrame) -> pl.DataFrame:
     if frame.is_empty() or "ts_code" not in frame.columns:
         return frame
     code = pl.col("ts_code").cast(pl.String)
-    known_code = code.str.contains(r"^\d{6}\.(SH|SZ|BJ)$").fill_null(False)
+    known_code = code.str.contains(r"^(?:\d{6}\.(SH|SZ|BJ)|T\d{5,6}\.(SH|SZ))$").fill_null(False)
     a_share = code.str.contains(
         r"^(?:(?:600|601|603|605|688)\d{3}\.SH|(?:000|001|002|003|300|301)\d{3}\.SZ)$"
     ).fill_null(False)

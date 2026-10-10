@@ -32,6 +32,8 @@ class HistoryRefresh:
         end: date,
         full: bool,
         check: Callable[[], None],
+        *,
+        before_complete: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
         job_id, snapshot = job["id"], job["snapshot"]
         state_key = f"_{dataset}_refresh"
@@ -241,6 +243,8 @@ class HistoryRefresh:
                 )
                 or None,
             }
+            if before_complete is not None:
+                before_complete()
             self.repository.publish(
                 dataset,
                 normalize(dataset, pl.DataFrame(), self.provider.source, job_id),
