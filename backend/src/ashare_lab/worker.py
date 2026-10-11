@@ -3,6 +3,7 @@ import json
 import os
 import signal
 import threading
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ from ashare_lab.config import Settings
 from ashare_lab.db import Database, identifier, jobs, now
 from ashare_lab.dca import DCA_VERSION, prepare, simulate
 from ashare_lab.factors import FACTOR_VERSION
+from ashare_lab.notifications import NotificationService
 from ashare_lab.portfolio import PORTFOLIO_VERSION, prepare_portfolio, simulate_portfolio
 from ashare_lab.providers import DataProvider, ProviderError, TushareProvider
 from ashare_lab.rules import RULE_VERSION
@@ -53,12 +55,14 @@ class Worker:
         self.repository = MarketRepository(self.db, settings.data_dir)
         self.provider = provider or TushareProvider(settings)
         self._stopping = threading.Event()
+        self.notifications = NotificationService(settings, self.db, self.repository)
 
     def check(self, job_id: str) -> None:
         if self.db.is_cancelled(job_id):
             raise Cancelled()
 
     def recover(self) -> None:
+        self.notifications.recover_deliveries()
         with self.db.engine.begin() as conn:
             conn.execute(text("BEGIN IMMEDIATE"))
             abandoned = (
@@ -71,7 +75,13 @@ class Worker:
                 status, error = "queued", None
                 if job["cancel_requested"]:
                     status = "cancelled"
-                elif job["kind"] in {"screening", "dca", "backtest", "portfolio"}:
+                elif job["kind"] in {
+                    "screening",
+                    "dca",
+                    "backtest",
+                    "portfolio",
+                    "notification_signal",
+                }:
                     interruptions = snapshot.get("_recovery_interruptions", 0) + 1
                     snapshot["_recovery_interruptions"] = interruptions
                     if interruptions >= 3:
@@ -183,6 +193,9 @@ class Worker:
                 if completion_prepared:
                     return
                 status = "partial" if result["warnings"] else "succeeded"
+            elif job["kind"] == "notification_signal":
+                result = self.notifications.execute_signal(job)
+                status = "partial" if result["status"] == "insufficient_data" else "succeeded"
             elif job["kind"] in {"dca", "backtest", "portfolio"}:
                 portfolio = job["kind"] == "portfolio"
                 backtest = job["kind"] == "backtest"
@@ -455,30 +468,59 @@ class Worker:
             ) as research_pool,
         ):
             lanes = [(True, sync_pool, 1), (False, research_pool, research_limit)]
+            senders: list[threading.Thread] = []
+            senders_stopping = threading.Event()
+
+            def send_loop(kind: str) -> None:
+                while not self._stopping.is_set() and not senders_stopping.is_set():
+                    try:
+                        worked = self.notifications.send_once(kind)
+                    except Exception:
+                        # Raw upstream exceptions may contain credentials. Never log them.
+                        worked = False
+                    if not worked:
+                        senders_stopping.wait(1)
+
+            for kind in ("webhook", "email"):
+                thread = threading.Thread(
+                    target=send_loop, args=(kind,), name=f"notify-{kind}", daemon=True
+                )
+                thread.start()
+                senders.append(thread)
+            next_notification_tick = 0.0
             active: dict[bool, set[Future[None]]] = {True: set(), False: set()}
-            while not self._stopping.is_set():
-                for sync, pool, limit in lanes:
-                    for future in tuple(active[sync]):
-                        if future.done():
-                            active[sync].remove(future)
-                            future.result()
-                    while len(active[sync]) < limit and not self._stopping.is_set():
-                        job = self.claim_job(sync=sync)
-                        if job is None:
-                            break
-                        if self._stopping.is_set():
-                            self._release_claim(job)
-                            break
-                        try:
-                            active[sync].add(pool.submit(self.execute_job, job))
-                        except BaseException:
-                            self._release_claim(job)
-                            raise
-                self._stopping.wait(self.settings.worker_poll_seconds)
-            # Surface executor errors even when shutdown happens before the next poll.
-            for futures in active.values():
-                for future in futures:
-                    future.result()
+            try:
+                while not self._stopping.is_set():
+                    if time.monotonic() >= next_notification_tick:
+                        self.notifications.schedule()
+                        next_notification_tick = time.monotonic() + 60
+                    for sync, pool, limit in lanes:
+                        for future in tuple(active[sync]):
+                            if future.done():
+                                active[sync].remove(future)
+                                future.result()
+                        while len(active[sync]) < limit and not self._stopping.is_set():
+                            job = self.claim_job(sync=sync)
+                            if job is None:
+                                break
+                            if self._stopping.is_set():
+                                self._release_claim(job)
+                                break
+                            try:
+                                active[sync].add(pool.submit(self.execute_job, job))
+                            except BaseException:
+                                self._release_claim(job)
+                                raise
+                    self._stopping.wait(self.settings.worker_poll_seconds)
+                # Surface executor errors even when shutdown happens before the next poll.
+                for futures in active.values():
+                    for future in futures:
+                        future.result()
+
+            finally:
+                senders_stopping.set()
+                for sender in senders:
+                    sender.join(timeout=35)
 
     def serve(self, once: bool = False) -> None:
         lock_path: Path = self.settings.database_path.with_suffix(".worker.lock")

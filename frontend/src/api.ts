@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-class ApiError extends Error {
-  constructor(message: string, readonly status: number) { super(message); }
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
 }
 
 let accessToken = "";
@@ -18,7 +23,9 @@ export async function api<T>(
     headers: {
       "Content-Type": "application/json",
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-      ...(managementPassword ? { "X-Data-Management-Password": managementPassword } : {}),
+      ...(managementPassword
+        ? { "X-Data-Management-Password": managementPassword }
+        : {}),
       ...options.headers,
     },
   });
@@ -28,7 +35,7 @@ export async function api<T>(
       detail?: unknown;
       code?: string;
     };
-    if (response.status === 401)
+    if (response.status === 401 && !path.startsWith("/notifications"))
       window.dispatchEvent(new Event("ashare-auth-required"));
     if (response.status === 403 && body.code === "data_management_locked")
       window.dispatchEvent(new Event("ashare-data-locked"));
@@ -57,7 +64,11 @@ export async function downloadCsv(path: string, filename: string) {
   element.click();
   URL.revokeObjectURL(url);
 }
-export function useResource<T>(path: string | null, pollMs = 0, managementPassword?: string) {
+export function useResource<T>(
+  path: string | null,
+  pollMs = 0,
+  managementPassword?: string,
+) {
   const [data, setData] = useState<T>();
   const [error, setError] = useState("");
   const refresh = useRef<() => void>(() => {});
@@ -78,26 +89,41 @@ export function useResource<T>(path: string | null, pollMs = 0, managementPasswo
     setError("");
     const read = async () => {
       if (stopped || controller.signal.aborted) return;
-      if (inFlight) { pendingRefresh = true; return; }
+      if (inFlight) {
+        pendingRefresh = true;
+        return;
+      }
       if (timer) clearTimeout(timer);
       inFlight = true;
       try {
-        const value = await api<T>(path, { signal: controller.signal }, managementPassword);
-        if (!controller.signal.aborted) { setData(value); setError(""); }
+        const value = await api<T>(
+          path,
+          { signal: controller.signal },
+          managementPassword,
+        );
+        if (!controller.signal.aborted) {
+          setData(value);
+          setError("");
+        }
       } catch (e: unknown) {
         if (!controller.signal.aborted) {
           setError(e instanceof Error ? e.message : "请求失败");
-          if (e instanceof ApiError && (e.status === 401 || e.status === 403)) stopped = true;
+          if (e instanceof ApiError && (e.status === 401 || e.status === 403))
+            stopped = true;
         }
       } finally {
         inFlight = false;
         if (!stopped && !controller.signal.aborted) {
-          if (pendingRefresh) { pendingRefresh = false; void read(); }
-          else if (pollMs) timer = setTimeout(() => void read(), pollMs);
+          if (pendingRefresh) {
+            pendingRefresh = false;
+            void read();
+          } else if (pollMs) timer = setTimeout(() => void read(), pollMs);
         }
       }
     };
-    refresh.current = () => { void read(); };
+    refresh.current = () => {
+      void read();
+    };
     void read();
     return () => {
       stopped = true;

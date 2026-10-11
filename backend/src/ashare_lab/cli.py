@@ -41,7 +41,11 @@ def main() -> None:
     settings = Settings()
     if args.command == "serve":
         uvicorn.run(
-            "ashare_lab.api:create_app", factory=True, host=settings.api_host, port=args.port
+            "ashare_lab.api:create_app",
+            factory=True,
+            host=settings.api_host,
+            port=args.port,
+            proxy_headers=False,
         )
         return
     if args.command == "worker":

@@ -2,13 +2,16 @@
 
 from collections.abc import Callable
 from datetime import date, timedelta
-from math import isfinite, sqrt
+from math import isfinite
 from typing import Any
 
 from ashare_lab.backtest import BACKTEST_VERSION, STRATEGY_VERSION, simulate
 from ashare_lab.dca import prepare as prepare_market
 from ashare_lab.factors import adjusted_prices
 from ashare_lab.schemas import BacktestCompareRequest, BacktestRequest, StrategyConfig
+from ashare_lab.signals import ema as ema
+from ashare_lab.signals import rsi as rsi
+from ashare_lab.signals import signal, warmup
 from ashare_lab.warehouse import MarketRepository
 
 COMPARISON_VERSION = "1.0.0"
@@ -34,95 +37,6 @@ PARAMETERS = {
     "exit_window": ("卖出窗口", 2, 250, 1),
     "deviations": ("标准差倍数", 0.5, 5, 0.1),
 }
-
-
-def warmup(config: StrategyConfig) -> int:
-    return {
-        "buy_hold": 0,
-        "ma_cross": config.long_window,
-        "macd_cross": 5 * config.slow_window + config.signal_window,
-        "rsi_reversal": 5 * config.period + 1,
-        "donchian_breakout": max(config.entry_window, config.exit_window),
-        "bollinger_reversion": config.period,
-    }[config.id]
-
-
-def ema(values: list[float], period: int) -> list[float | None]:
-    result: list[float | None] = [None] * len(values)
-    if len(values) < period:
-        return result
-    value = sum(values[:period]) / period
-    result[period - 1] = value
-    for index in range(period, len(values)):
-        value += 2 / (period + 1) * (values[index] - value)
-        result[index] = value
-    return result
-
-
-def rsi(values: list[float], period: int) -> list[float | None]:
-    result: list[float | None] = [None] * len(values)
-    if len(values) <= period:
-        return result
-    changes = [b - a for a, b in zip(values, values[1:], strict=False)]
-    gain = sum(max(v, 0) for v in changes[:period]) / period
-    loss = sum(max(-v, 0) for v in changes[:period]) / period
-    for index in range(period, len(values)):
-        if index > period:
-            change = changes[index - 1]
-            gain = (gain * (period - 1) + max(change, 0)) / period
-            loss = (loss * (period - 1) + max(-change, 0)) / period
-        result[index] = (
-            50 if gain == loss == 0 else 100 if loss == 0 else 100 - 100 / (1 + gain / loss)
-        )
-    return result
-
-
-def crossing(previous: float, current: float, level: float = 0) -> str | None:
-    tolerance = max(abs(previous), abs(current), abs(level), 1) * 1e-12
-    old = previous - level
-    new = current - level
-    old = 0 if abs(old) <= tolerance else old
-    new = 0 if abs(new) <= tolerance else new
-    return "buy" if old <= 0 < new else "sell" if old >= 0 > new else None
-
-
-def signal(
-    config: StrategyConfig, closes: list[float], highs: list[float], lows: list[float]
-) -> str | None:
-    if config.id == "donchian_breakout":
-        if closes[-1] > max(highs[-config.entry_window - 1 : -1]):
-            return "buy"
-        if closes[-1] < min(lows[-config.exit_window - 1 : -1]):
-            return "sell"
-        return None
-    if config.id == "macd_cross":
-        fast, slow = ema(closes, config.fast_window), ema(closes, config.slow_window)
-        dif = [a - b for a, b in zip(fast, slow, strict=True) if a is not None and b is not None]
-        dea = ema(dif, config.signal_window)
-        if len(dif) < 2 or dea[-2] is None or dea[-1] is None:
-            return None
-        return crossing(dif[-2] - dea[-2], dif[-1] - dea[-1])
-    if config.id == "rsi_reversal":
-        values = rsi(closes, config.period)
-        previous, current = values[-2:]
-        if previous is None or current is None:
-            return None
-        if crossing(previous, current, config.upper) == "sell":
-            return "sell"
-        return "buy" if crossing(previous, current, config.lower) == "buy" else None
-    if config.id == "bollinger_reversion":
-        differences = []
-        middle_differences = []
-        for stop in (len(closes) - 1, len(closes)):
-            window = closes[stop - config.period : stop]
-            middle = sum(window) / config.period
-            deviation = sqrt(sum((value - middle) ** 2 for value in window) / config.period)
-            differences.append(closes[stop - 1] - (middle - config.deviations * deviation))
-            middle_differences.append(closes[stop - 1] - middle)
-        if crossing(*middle_differences) == "buy":
-            return "sell"
-        return "buy" if crossing(*differences) == "buy" else None
-    return None
 
 
 def prepare_comparison(

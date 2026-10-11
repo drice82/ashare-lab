@@ -17,8 +17,7 @@ export default function ModuleTabs({
   history: (active: boolean) => ReactNode;
   children: ReactNode;
 }) {
-  const [query, setQuery] = useSearchParams();
-  const id = useId();
+  const [query] = useSearchParams();
   const tabs = [
     { key: "main", label: mainLabel, content: children },
     ...(result !== undefined
@@ -30,13 +29,27 @@ export default function ModuleTabs({
       content: history(query.get("tab") === "history"),
     },
   ];
+  return <Tabs label={`${mainLabel}功能分页`} tabs={tabs} defaultKey="main" />;
+}
+
+export function Tabs({
+  label,
+  tabs,
+  defaultKey,
+}: {
+  label: string;
+  tabs: { key: string; label: string; content: ReactNode }[];
+  defaultKey: string;
+}) {
+  const [query, setQuery] = useSearchParams();
+  const id = useId();
   const active = tabs.some((tab) => tab.key === query.get("tab"))
     ? query.get("tab")
-    : "main";
+    : defaultKey;
   function choose(key: string) {
     setQuery((current) => {
       const next = new URLSearchParams(current);
-      if (key === "main") next.delete("tab");
+      if (key === defaultKey) next.delete("tab");
       else next.set("tab", key);
       return next;
     });
@@ -45,7 +58,7 @@ export default function ModuleTabs({
     <div className="min-w-0 space-y-5">
       <div
         role="tablist"
-        aria-label={`${mainLabel}功能分页`}
+        aria-label={label}
         className="flex flex-wrap gap-2 border-b border-border pb-2"
       >
         {tabs.map((tab, index) => (

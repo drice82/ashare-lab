@@ -100,3 +100,39 @@ localhost研究接口默认无全站认证，管理接口仍要求独立密码�
 `GET /portfolio/runs/{id}/export?view=summary|curves|positions|ledger`默认ledger，UTF-8 BOM CSV导出两个账户的全量数据，不受账本分页或当前账户选择影响。每行含account、完整性、fixture_mode、参数、data_versions、engine_version、strategy_versions、警告和假设；未知空结果也提供元数据。
 
 账本字段date/event/stock_code/signal_date/shares_delta/price/amount/fee/tax/cash/shares/reason。buy的amount为负成交额，sell为正，费用和已到账权益卖出补税分别扣除。dividend的amount为税前到账金额，tax为本次派息扣除的已确定税负，因此该事件净现金变动为amount−tax。entitlement仅登记权益，不改变现金。新增rebalance周期调仓和below_lot单位不足；insufficient_cash说明未完成目标本次结束。规则详见portfolio-rules.md。
+
+## 邮箱验证码信号通知
+
+以下准确路径和方法豁免共享访问密钥（不豁免任意 `/notifications/*`）。登录验证码、选项和专用退订公开，其余管理操作需邮箱账号Cookie和记录归属；退出允许幂等调用。所有写请求必须携带同源 `Origin`，未知路由仍受原共享密钥保护。登录失效401使用 `notification_unauthorized`，前端清空私有状态并显示邮箱登录，不弹出共享访问密钥框。通知响应禁止缓存。
+
+| `/api/v1/notifications` 下的路径 | 方法及输入 |
+|---|---|
+| `/auth/email/verification` | POST `{address}`；统一发送首次/再次登录验证码，返回status/message/expires_in=600/resend_after=60，不泄露账号是否存在 |
+| `/auth/email/verify` | POST `{address,code}`，code为六位数字字符串；首次成功创建账号或接续已验证邮箱的旧身份，写Cookie；返回owner_id、脱敏email、expires_at，不返回会话Token |
+| `/session` | GET返回owner_id、脱敏email、expires_at；DELETE撤销当前会话并清Cookie，返回signed_out，其他设备会话保留 |
+| `/account/email/verification` | POST `{address}`，当前账号申请更换邮箱验证码，不改变原渠道 |
+| `/account/email/verify` | POST `{address,code}`，原子更换账号/收件邮箱并写新Cookie；返回同登录，撤销其他会话，邮箱冲突409 |
+| `/options` | GET策略参数、默认值、版本、渠道可用性、fixture/自动发送/订阅上限，以及auth.email_available、auth.session_days |
+| `/instruments` | GET `search`，仅存续沪深A股，返回items和data_versions |
+| `/channels` | GET脱敏渠道及验证/停用状态 |
+| `/channels/webhook` | PUT `{target}`绑定并测试，target为1–2048字符公网HTTPS URL；DELETE停用并取消Webhook待发消息 |
+| `/channels/email` | DELETE停用邮件通知，不删除登录账号；取消邮件待发消息 |
+| `/channels/{webhook,email}/enable` | POST启用保留的渠道；邮件使用已验证账号邮箱，Webhook先测试验证；不恢复已退订订阅或旧队列，重复启用不改变修订 |
+| `/channels/{webhook,email}/test` | POST，已验证且启用渠道手动测试，正文“这是一条测试通知” |
+| `/subscriptions` | GET自己的订阅，附加stock_name（当前固定基础快照的展示名称，缺失为null）；POST `{stock_code,strategy,directions?,channels}`，channels至少一个，重复返回已有 |
+| `/subscriptions/{id}` | PATCH stock_code/strategy/directions/channels/status（active/paused），DELETE软删除 |
+| `/deliveries` | GET `channel?`（webhook/email/bark，bark仅查旧记录）, `limit`（默认50，1–100）, `offset`，返回items/total和不可变outcome |
+| `/email/unsubscribe` | POST `{token}`，仅移除此订阅邮件渠道，token从fragment读取并清除 |
+
+旧POST `/session`、`/recover`、`/channels/email/verification`、`/channels/email/verify`已移除，PUT `/channels/email`不再提供。旧Bark绑定、删除和测试接口也已移除。
+
+Webhook固定POST JSON `{title,body,group:"ashare-lab"}`，普通接收端HTTP 2xx表示接受；Bark官方api.day.app还要求JSON业务code=200。URL不能含userinfo或fragment，DNS全部地址必须公网，发送时重新解析且TCP连接固定到验证过的IP，TLS仍验证原域名；15秒超时、不跟随重定向、不使用环境代理。完整地址只加密保存，不在列表、异常或日志中回显。
+
+策略输入复用StrategyConfig，仅支持ma_cross/macd_cross/rsi_reversal/bollinger_reversion/donchian_breakout及适用参数。绑定成功、验证码发送和测试返回accepted仅指上游接受；不保证最终实收。验证码输入错误/过期/尝试超限统一invalid_verification；限流429，渠道未验证409，管理员未配置服务503，上游固定错误码502。秘密不回显，原始上游异常不返回或记录。详见 [信号口径](notification-rules.md) 与 [部署验收](notification-deployment.md)。
+
+
+`POST /notifications/subscriptions/{sid}/test` 接受 `{direction:"buy"|"sell"}`，必须为该订阅已选方向，暂停订阅也可测试。返回 `{message,results:[{channel,status,message?}]}`；每渠道status为accepted/failed/unknown/cancelled/skipped，不可用渠道给出跳过原因，无可用渠道409，不属于当前账号或已删除订阅404。测试通知为明确标注的示例，不执行真实信号计算。所有新增接口沿用账号会话、同源Origin及准确路径/方法的共享密钥豁免。
+
+渠道及订阅测试共享账号额度：滚动一小时前5次连续发送，之后间隔至少60秒，每小时最多20次；多渠道一次测试计一次，实际发送失败计次，校验失败和限流拒绝不计次，429消息含等待秒数。Webhook重新启用时的测试也计额度，现有IP保护保留。
+
+`GET /notifications/deliveries` 合并正式信号与独立订阅测试记录，新增 `is_test` 布尔标识。测试记录的created_at为测试时间，trade_date为“示例日期”，check_id/revision/channel_revision/next_attempt为空，outcome包含股票、策略快照、明确示例依据和空数据版本。status新增unknown（发送状态未知，无自动重试）；正式记录原字段保持兼容。统一按created_at降序和id排序，渠道筛选、total、limit、offset均覆盖合并结果。Bark查询参数保留兼容，前端仅提供全部、邮件和Webhook选项。

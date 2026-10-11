@@ -91,7 +91,7 @@ API 删除入口仅转交 ApplicationService。服务在 SQLite BEGIN IMMEDIATE 
 
 ## 多策略比较
 
-API→BacktestService→comparison领域模块→共用单股成交/分红引擎。六个内置策略配置及适用参数在schemas中验证，comparison负责预热、指标和信号；API不计算规则。一次读取公共行情及最大预热范围，再逐策略截取各自固定窗口和独立issues，不共用现金/权益对象。每策略结果保存完整账本，概览读取去除账本，策略详情分页账本但成交标记使用全量数据。
+API→BacktestService→comparison领域模块→共用单股成交/分红引擎。六个内置策略配置及适用参数在schemas中验证，comparison负责预热，signals负责共用指标和信号；API不计算规则。一次读取公共行情及最大预热范围，再逐策略截取各自固定窗口和独立issues，不共用现金/权益对象。每策略结果保存完整账本，概览读取去除账本，策略详情分页账本但成交标记使用全量数据。
 
 比较使用原backtest任务类型，无表迁移；snapshot固定_comparison_version=1.0.0、_backtest_version=1.0.1及_strategy_version_<id>。Worker按请求是否含strategies分派；旧入口保留_strategy_version校验，比较逐策略校验版本。串行计算、统一取消、原子发布单文件；未知数据逐策略隔离，程序异常整个任务失败。现有恢复次数限制、删除及文件清理流程沿用。前端默认多选、历史识别旧/新结果类型；曲线/买卖点复用Lightweight Charts，指标柱状图为SVG，不增加运行依赖。
 
@@ -125,3 +125,20 @@ API → PortfolioBacktestService → 组合领域引擎 → MarketRepository。�
 ## 六策略知识库
 
 `/knowledge` 为懒加载静态前端页面，无 API 请求、认证或数据版本读取。`knowledge.ts` 按现有 `StrategyId` 维护思路、计算口径、人工信号示例和外部教育资料，名称、参数与预热天数复用 `comparison.ts`；研究引擎仍是规则来源，知识库不计算信号或修改任务。页面目录通过 URL hash 使用策略 ID 定位，React Router 的 location 变化驱动标题滚动及键盘焦点，支持刷新和前进/后退。侧栏入口位于组合回测之后，单股回测“策略说明”新窗口打开，以保留原研究草稿；延伸阅读标明机构、英文、新窗口并使用 noopener/noreferrer。首版不包含筛选、定投或组合教程。
+
+## 信号通知 V1
+
+新增 NotificationService 与 notifications APIRouter。API仅验证输入、邮箱账号会话及调用服务，规则在 `signals.py`：从comparison抽取EMA/RSI/技术信号，comparison保留ema/rsi兼容导出；从backtest提取原双均线窗口函数，旧交易引擎/版本不变。独立通知加载器固定五个依赖版本，只读信号日及之前的指标行情，不读取分红/成交限制或运行资金模拟。
+
+Alembic0004新增匿名主体、加密渠道、订阅、不可变检查、持久逐渠道outbox、验证码摘要、持久限流计数及SMTP服务状态。0005保留原owner_id及所有关联业务表，增加邮箱账号映射、独立多设备会话及分用途验证码表，旧匿名会话和恢复码字段仅留失效占位值。NotificationAuth负责验证码原子消费、唯一邮箱账号与旧身份接续、会话及邮箱更换；普通登录不会写渠道或订阅修订。随机会话只存摘要，六位验证码存HMAC摘要（防数据库泄露后离线穷举）；Webhook完整URL和邮箱存Fernet密文，加密密钥只从部署环境提供。用户输入的Webhook URL可能含接收端凭据，沿用原Device Key业务配置的加密存储例外；管理员供应商Token/SMTP秘密仍来自环境。0006事务停用旧Bark并移除订阅中的旧渠道，保留邮件队列及历史；仅Bark的订阅暂停，用户重新配置。
+
+Worker每分钟16:00后只调度最近已收盘日；以股票、规范参数、日期和固定数据/策略版本合并notification_signal任务，使用原研究通道。数据不足任务为partial（待覆盖重试），原同步partial语义保留。检查/outbox同事务、唯一约束防重算重复入队。恢复复用持久快照，但若日期已过期则不再计算；日历缺失时等待。完成任务结果可复用并补全其它订阅的原子fan-out；移除/删除、修订、渠道验证状态在发送前重查。
+
+独立单线程Webhook与邮件发送器在网络等待时关闭写事务，持久attempt/next_attempt支持有界重试。发送过程中崩溃恢复为pending，接受后超时无法判定远端是否已送达，可能重复；稳定Message-ID不声称消除SMTP重复。新交易日使旧待发送消息过期。fixture依赖强制禁用自动发送，默认开关关闭，真实接入验收后由管理员启用。
+
+共享密钥豁免按准确路由/方法列举；邮箱账号查询/写入校验归属，写入检查Origin。Uvicorn不自动信任代理头，仅明确可信IP/CIDR读取nginx覆盖的X-Real-IP。专用邮件退订签名带订阅和邮箱修订，凭据放URL fragment并由确认按钮POST，权限仅覆盖该订阅邮件渠道。订阅恢复和渠道停用只修改通知数据，不变更研究任务/数据版本。详见notification-rules.md及notification-deployment.md。
+
+通知前端复用ModuleTabs提取出的Tabs组件，支持自定义页签键和默认页签，保留现有研究页面接口；URL tab参数选择通知订阅/记录/设置面板，面板保持挂载以保留草稿。订阅名称从一次固定基础快照批量加载，仅作当前管理展示，不用于历史ST或信号计算。Webhook以标准库HTTPS连接发送固定JSON：验证公网DNS后固定TCP地址，TLS SNI/证书和Host仍使用原域名，不跟随重定向或读取代理环境。绑定和每次发送均验证目标，不将URL或上游异常回显。
+
+
+手动订阅示例由NotificationService校验归属/方向/渠道并同步逐渠道发送，API仅验证输入与调用服务。正式信号与示例共用消息模板，示例显式标注测试及示例数据，不调用行情计算或污染检查/outbox。0007独立测试请求与投递表用于持久账号滚动限速及结果审计；事务预留额度、保存未知结果后释放写锁再发送，不自动恢复或重试手动通知。发送记录以SQL UNION ALL合并正式/测试记录，数据库统一过滤、计数及分页。Webhook启用路由属于准确共享密钥豁免和同源保护范围，并沿用发送IP保护。

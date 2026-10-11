@@ -45,6 +45,11 @@ export default function StockDetail() {
   const names = new Map(registry.data?.factors.map((f) => [f.id, f.name]));
   return (
     <>
+      <Button asChild variant="outline">
+        <Link to={`/notifications?stock_code=${encodeURIComponent(code)}`}>
+          订阅信号通知
+        </Link>
+      </Button>
       <PageTitle
         title={row ? `${row.stock_name} · ${code}` : code}
         subtitle={`股票详情 · ${row?.as_of_date ?? bars.data?.anchor_date ?? ""}`}

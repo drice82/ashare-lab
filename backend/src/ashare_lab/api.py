@@ -1,11 +1,16 @@
 import secrets
 from datetime import date
+from ipaddress import ip_address, ip_network
 from typing import Annotated, Any, Literal
 
 from fastapi import FastAPI, Query, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 
 from ashare_lab.config import Settings
+from ashare_lab.notification_api import PREFIX, is_notification_route, router_for
+from ashare_lab.notifications import NotificationService
 from ashare_lab.schemas import (
     BacktestCompareRequest,
     BacktestRequest,
@@ -24,9 +29,63 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="ashare-lab", version="0.1.0")
     app.state.settings = settings
     app.state.service = service
+    notifications = NotificationService(settings, service.db, service.repository)
+    app.state.notifications = notifications
+    app.include_router(router_for(notifications))
 
     @app.middleware("http")
     async def access_control(request: Request, call_next: Any) -> Any:
+        notification_route = is_notification_route(request.url.path, request.method)
+        if notification_route:
+            try:
+                if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+                    origin = request.headers.get("origin")
+                    # All public writes require a same-origin Origin header.
+                    expected = settings.notification_public_url.rstrip("/")
+                    if origin and origin not in {expected, str(request.base_url).rstrip("/")}:
+                        return JSONResponse(
+                            status_code=403,
+                            content={
+                                "code": "origin_rejected",
+                                "message": "写请求必须来自同源页面",
+                            },
+                        )
+                    if not origin:
+                        return JSONResponse(
+                            status_code=403,
+                            content={"code": "origin_rejected", "message": "写请求缺少同源 Origin"},
+                        )
+                    ip = request.client.host if request.client else "unknown"
+                    trusted = settings.notification_trusted_proxies.split(",")
+                    if any(
+                        network.strip() and ip_address(ip) in ip_network(network.strip())
+                        for network in trusted
+                    ):
+                        forwarded = request.headers.get("x-real-ip", "")
+                        try:
+                            ip = str(ip_address(forwarded))
+                        except ValueError:
+                            pass
+                    notifications.rate_limit(f"write-ip:{ip}", 60, 60)
+                    if (
+                        request.url.path.endswith(("/test", "/verification"))
+                        or request.method == "PUT"
+                        or request.url.path == PREFIX + "/channels/webhook/enable"
+                    ):
+                        notifications.rate_limit(f"notification-send-ip:{ip}", 60, 10)
+                        notifications.rate_limit(f"notification-send-ip:{ip}", 86400, 100)
+                    if request.url.path in {
+                        PREFIX + "/auth/email/verify",
+                        PREFIX + "/account/email/verify",
+                    }:
+                        notifications.rate_limit(f"identity-ip:{ip}", 3600, 10)
+                response = await call_next(request)
+                response.headers["Cache-Control"] = "no-store"
+                return response
+            except ServiceError as exc:
+                return JSONResponse(
+                    status_code=exc.status, content={"code": exc.code, "message": str(exc)}
+                )
         token = settings.api_access_token.get_secret_value()
         if (
             request.url.path.startswith("/api/v1")
@@ -52,6 +111,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     content={"code": "data_management_locked", "message": "数据管理密码缺失或错误"},
                 )
         return await call_next(request)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+        if request.url.path.startswith(PREFIX):
+            return JSONResponse(
+                status_code=422,
+                content={"code": "invalid_parameters", "message": "通知输入参数无效"},
+            )
+        return await request_validation_exception_handler(request, exc)
 
     @app.exception_handler(ServiceError)
     async def service_error(_: Request, exc: ServiceError) -> JSONResponse:

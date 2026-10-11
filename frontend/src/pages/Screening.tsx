@@ -50,6 +50,8 @@ export default function Screening() {
     2000,
   );
   const [ruleId, setRuleId] = useState("A");
+  const [dividendDraft, setDividendDraft] = useState<string | null>(null);
+  const dividendInput = useRef<HTMLInputElement>(null);
   const [parameters, setParameters] = useState<Parameters>({});
   const [day, setDay] = useState("");
   const [universe, setUniverse] = useState<"all" | "custom">("all");
@@ -67,6 +69,8 @@ export default function Screening() {
     if (market.data && !day) setDay(market.data.latest_market_date ?? "");
   }, [market.data, day]);
   function apply(definition: ScreeningDefinition) {
+    dividendInput.current?.setCustomValidity("");
+    setDividendDraft(null);
     setRuleId(definition.rule_id);
     setParameters(definition.parameters);
     setDay(definition.as_of_date);
@@ -115,6 +119,8 @@ export default function Screening() {
     };
   }
   async function execute() {
+    if (dividendInput.current && !dividendInput.current.reportValidity())
+      return;
     setBusy(true);
     setError("");
     setNotice("");
@@ -132,6 +138,8 @@ export default function Screening() {
     }
   }
   async function save() {
+    if (dividendInput.current && !dividendInput.current.reportValidity())
+      return;
     setError("");
     try {
       await api("/screening/presets", {
@@ -241,6 +249,8 @@ export default function Screening() {
                   value={ruleId}
                   onChange={(e) => {
                     const id = e.target.value;
+                    dividendInput.current?.setCustomValidity("");
+                    setDividendDraft(null);
                     setRuleId(id);
                     setParameters(
                       rules.data!.rules.find((r) => r.id === id)!.defaults,
@@ -303,8 +313,18 @@ export default function Screening() {
                       {label} ({unit})
                       <input
                         aria-label={label}
-                        type="number"
-                        step="any"
+                        ref={key === "dividend_min" ? dividendInput : undefined}
+                        type={key === "dividend_min" ? "text" : "number"}
+                        inputMode={
+                          key === "dividend_min" ? "decimal" : undefined
+                        }
+                        required={key === "dividend_min"}
+                        pattern={
+                          key === "dividend_min"
+                            ? "[0-9]+([.][0-9]?)?"
+                            : undefined
+                        }
+                        step={key === "dividend_min" ? "0.1" : "any"}
                         min={
                           constraint?.minimum === undefined
                             ? undefined
@@ -315,12 +335,48 @@ export default function Screening() {
                             ? undefined
                             : constraint.maximum * multiplier
                         }
-                        value={(value as number) * multiplier}
-                        onChange={(e) =>
+                        value={
+                          key === "dividend_min"
+                            ? (dividendDraft ??
+                              String(
+                                Number(
+                                  ((value as number) * multiplier).toFixed(10),
+                                ),
+                              ))
+                            : (value as number) * multiplier
+                        }
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (key === "dividend_min") {
+                            setDividendDraft(raw);
+                            const numeric = Number(raw) / multiplier;
+                            const valid =
+                              /^[0-9]+(\.[0-9]?)?$/.test(raw) &&
+                              (constraint?.minimum === undefined ||
+                                numeric >= constraint.minimum) &&
+                              (constraint?.maximum === undefined ||
+                                numeric <= constraint.maximum);
+                            e.target.setCustomValidity(
+                              valid ? "" : "请输入范围内的股息率，最多一位小数",
+                            );
+                            if (!valid) return;
+                          }
                           setParameters((p) => ({
                             ...p,
-                            [key]: Number(e.target.value) / multiplier,
-                          }))
+                            [key]: Number(raw) / multiplier,
+                          }));
+                        }}
+                        onBlur={
+                          key === "dividend_min"
+                            ? (e) => {
+                                if (e.target.checkValidity())
+                                  setDividendDraft(
+                                    String(
+                                      Number(Number(e.target.value).toFixed(1)),
+                                    ),
+                                  );
+                              }
+                            : undefined
                         }
                       />
                     </label>

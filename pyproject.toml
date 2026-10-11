@@ -10,7 +10,7 @@ dependencies = [
   "fastapi>=0.115,<1", "uvicorn>=0.34,<1", "pydantic-settings>=2.7,<3",
   "sqlalchemy>=2.0,<3", "alembic>=1.14,<2", "duckdb>=1.2,<2",
   "polars>=1.24,<2", "pyarrow>=19,<24", "numpy>=2.2,<3", "httpx>=0.28,<1",
-  "apscheduler>=3.11,<4", "pypinyin>=0.55,<1",
+  "cryptography>=44,<47", "apscheduler>=3.11,<4", "pypinyin>=0.55,<1",
 ]
 
 [project.optional-dependencies]

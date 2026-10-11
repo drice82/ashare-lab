@@ -15,7 +15,7 @@ SQLite 由 Alembic 迁移管理，目前包含以下业务表。筛选和同步�
 |rule_definitions|id、version、definition；规则定义与参数|
 |settings|key、value；不含秘密的运行配置，Token只读环境变量|
 
-状态：queued、running、cancel_requested、cancelled、succeeded、partial、failed。partial 专用于同步的可选数据降级，筛选发布必须整体完成。数据库启用 WAL、外键和 busy_timeout。
+状态：queued、running、cancel_requested、cancelled、succeeded、partial、failed。partial 用于同步的可选数据降级及通知计算等待覆盖，筛选发布必须整体完成。数据库启用 WAL、外键和 busy_timeout。
 
 Parquet 数据集：stock_basic、namechange、trade_cal、daily、adj_factor、daily_basic、dividend、stk_limit、suspend_d。原始 Tushare 代码规范化为 stock_code；daily 的 vol（手）转为 volume（股），amount（千元）转为 amount（元）。百分数输入转成小数。日期为 ISO 日期字符串。source、batch_id、schema_version、fetched_at 列记录来源。
 
@@ -63,3 +63,26 @@ jobs新增kind=portfolio，payload为PortfolioRequest（members、allocation、r
 不可变JSON的mode=portfolio。顶层summary/curve/positions/ledger/warnings为实际账户，benchmark包含独立基准账户同类字段；公共parameters/data_versions/fixture_mode/engine_version/strategy_versions/assumptions/prices随结果固定，excess_return仅两者完整时计算。positions按日期保存现金、现金占比和逐股持仓，持仓包含策略、资格、目标/配置/实际权重、估值日期、权益、税负及待执行目标。账本增加stock_code，contribution/rebalance/unknown可为组合事件，buy/sell只对应实际模拟成交。
 
 FIFO买入批次、权益的剩余未确定税股份/金额、已到账状态和已确定税负只属于领域计算，不新增业务表。部分卖出分摊登记金额，最后片段吸收残余分币；中断恢复从原请求重新构造账户，不重复到账或扣税。
+
+## 信号通知（Alembic0004 / 0005 / 0006）
+
+|表|用途与约束|
+|---|---|
+|notification_owners|内部owner_id及旧结构兼容字段；0005使session_hash/recovery_hash和expires_at失效，新鉴权不读旧字段|
+|notification_channels|owner_id/type联合主键，Fernet ciphertext、目标摘要、verified/status、目标revision|
+|notification_subscriptions|归属、股票、规范策略/方向/渠道、策略版本、status/revision、effective_after、last_check/waiting_reason；软删除保留记录|
+|notification_checks|不可变outcome包含日期、固定数据/算法版本、方向、依据和数值；订阅/revision/交易日唯一|
+|notification_deliveries|owner/subscription/check外键，信号日期/方向/渠道、配置和目标修订、status/attempts/next_attempt/error/accepted_at；订阅/交易日/方向/渠道唯一|
+|notification_verifications|0004旧渠道验证表，0005清空并停止使用|
+|notification_accounts|owner_id主键、规范化唯一email_hash、Fernet邮箱ciphertext；接续旧身份保留owner_id|
+|notification_sessions|SHA-256 session_hash主键、owner_id外键及索引、expires_at；每设备独立会话|
+|notification_auth_challenges|用途/账号/邮箱摘要生成key主键、purpose、可空owner_id、email_hash、验证码HMAC、expires_at、attempts；重发覆盖、成功消费与业务变更同事务|
+|notification_limits|摘要key/窗口联合主键，持久计数，旧窗口清理|
+|notification_service_state|SMTP故障码及配置摘要，变更配置解除旧故障|
+
+outbox状态pending/sending/accepted/failed/cancelled/expired。accepted仅指服务端已接受。网络发送不持有写事务，检查与每个选择渠道的outbox同事务。验证码正文不保存，失效后用户重新请求；不会记录验证码或原始上游异常。notification_signal任务partial表示等待完整覆盖，已有同步/研究状态语义不变。
+
+0006仅迁移通知业务数据：旧Bark渠道停用、撤销验证并递增目标修订；取消其pending/sending投递，从非删除订阅中移除bark，无剩余渠道的暂停并提示重新配置。仍有邮件的订阅修订不变，保留排队邮件。历史检查与已接受/失败投递、账号、会话和研究数据保留。迁移与版本标记同事务，中断回滚、重复启动不重复变更；downgrade不自动恢复凭据或取消过的消息。新渠道type为webhook/email，旧bark行仅保留历史兼容，列表不返回。stock_name为接口展示字段，不写入订阅表；历史名称仍在固定版本的outcome中。
+
+
+0007新增notification_test_requests（id、owner_id、timestamp）记录所有实际发起的手动渠道/订阅测试额度，按账号滚动窗口读取；BEGIN IMMEDIATE事务原子检查并预留。notification_test_deliveries保存订阅示例的request_id、owner_id、subscription_id、trade_date、direction、channel、status、attempts、error、created_at、accepted_at及outcome快照；不关联真实notification_checks，不受真实信号去重唯一约束。进程中断保留unknown，不进入Worker恢复/重试队列。新表与Alembic版本标记同事务，中断可回滚重试，历史记录和旧版本研究数据保持可读。

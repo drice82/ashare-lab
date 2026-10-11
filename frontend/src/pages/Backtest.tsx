@@ -22,6 +22,7 @@ import ComparisonResultsView from "../components/ComparisonResults";
 import {
   isComparison,
   strategyDefaults,
+  strategies,
   type StrategyConfig,
   type ComparisonResults,
   type ComparisonJob,
@@ -225,6 +226,20 @@ export default function Backtest() {
   const summary = data?.summary;
   return (
     <>
+      {definition.stock_code &&
+        selected
+          .filter((item) => item.id !== "buy_hold")
+          .map((item) => (
+            <Button asChild variant="outline" key={`subscribe-${item.id}`}>
+              <Link
+                to={`/notifications?${new URLSearchParams({ stock_code: definition.stock_code, strategy: JSON.stringify(item) })}`}
+              >
+                订阅
+                {strategies.find((strategy) => strategy.id === item.id)?.label}
+                信号
+              </Link>
+            </Button>
+          ))}
       <PageTitle
         title="单股回测"
         subtitle="六策略对比 · 收益与回撤曲线 · 股价买卖点 · 次日开盘模拟"

@@ -212,3 +212,29 @@ scripts/verify_portfolio_real.py在临时SQLite一致性副本、生产行情只
 ## 2026-10-11 知识库部署验收
 
 仅更新Web镜像8189ab97c4e9；原dc9e3eecc604保留回退。公网/knowledge及/health返回200，API/Worker实例与部署前一致，重启0、OOM=false。四类既有成功任务详情/结果共8个响应摘要一致，真实模式fixture_mode=false。生产Chromium只读验证六策略目录/正文/外链、章节刷新与历史、键盘、新窗口原回测草稿保留、1440px/390px布局及四类历史结果通过；知识库API请求0，业务写请求0，页面错误0。报告在/tmp/niuniu-knowledge-deployment/，截图在忽略的frontend/test-results/knowledge-production-{1440,390}.png。没有创建生产验收任务或操作研究数据。
+
+## 2026-10-11 免注册信号通知V1
+
+pytest300项、Ruff（含新增真实核对脚本）、格式63文件、mypy37源文件、Vitest72项、tsc/构建及git diff --check通过；既有回测/同步/版本恢复测试保持通过。独立fixture端到端通过双渠道保存、暂停/恢复/删除、跨浏览器恢复撤销旧会话、1440px/390px布局与无横向溢出，页面错误0；上游验证渠道为合成fixture初始化，不声称真实发送成功。
+
+`scripts/verify_notifications_real.py`固定2026-10-09和五个明确依赖版本，仅在临时SQLite副本迁移、只读生产不可变行情，000001.SZ/000338.SZ/600519.SH的五类默认策略共15组方向与独立NumPy算法完全一致。报告含指标、窗口及数据/策略版本，fixture_mode=false，生产写入0、通知发送0，位于`/tmp/niuniu-notification-real-audit/`（目录700、JSON600）。自动发送仍关闭；真实设备/邮件实收、真实退订和人工上线审核待完成，不部署、不修改生产任务。
+
+## 2026-10-11 信号通知生产部署验收
+
+用户授权后替换API/Worker/Web，SQLite0004、8张新通知表，原12张表和版本指针在迁移时保持一致，备份quick_check=ok。旧同步检查点5265项全部保留，新Worker恢复attempt2并继续完成237项。原筛选/定投/单股/组合各详情及结果共8个响应SHA-256不变。新镜像96项pytest、Ruff/63文件格式、mypy37文件通过，前端镜像tsc/build通过；此前完整pytest300、Vitest72通过。
+
+公网通知/退订/健康/公开选项HTTP200；私有匿名资源401，跨源POST403。Chromium1440px及390px检查通知页、手机导航、退订fragment清除、股票详情和既有回测参数预填入口，页面错误0、业务写请求0、无横向溢出。报告在私有/var/backups/ashare-lab/notifications-20261011-1149/。Bark可绑定、SMTP未配置，fixture_mode=false、auto_send=false；没有用生产测试订阅或虚构发送代替真实接入验收。真实Bark和SMTP接收及退订验收仍待完成。
+
+## 邮箱验证码通知鉴权（0005，本地验收）
+
+完整pytest312、Vitest74、Ruff检查/77文件格式、mypy39文件、tsc及构建通过。鉴权测试涵盖首次/再次登录、多设备退出、过期/重发/五次错误/并发一次消费、邮箱更换用途及归属隔离、冲突拒绝、SMTP不可用及失败不改业务、旧已验证身份接续、迁移中断回滚/重复升级、渠道停用及退订不因登录恢复。原通知调度、原子outbox、逐渠道重试与固定数据版本读取继续通过回归。
+
+Chromium在隔离fixture+实际API验收邮箱登录、两浏览器共享订阅、更换邮箱后旧设备退出、订阅管理与退出清理通过，1440px/390px无横向溢出，页面错误0。fixture验证码通过私有临时文件捕获，不公开测试接口或固定验证码，trace关闭。此为隔离流程验证，真实SMTP到达和手机实收仍待用户主动发码/测试人工确认；未部署0005或修改生产服务。
+
+## 2026-10-11 邮箱验证码鉴权生产验收（0005）
+
+三个服务完成协调升级，API健康、重启0、OOM=false；迁移前一致备份及隔离升级/重复启动通过，生产quick_check=ok。17张原业务表结构/行数及关键内容摘要、版本指针、1条原订阅、2个原渠道和8个研究详情/结果响应保持一致；旧匿名凭据失效、原渠道可解密，环境配置逐字节未变。公网健康/通知/退订/公开选项200，未登录私有401（notification_unauthorized），跨源发码403。Chromium1440px/390px邮箱登录页、无溢出及页面错误检查通过，业务写请求0。fixture=false、auto_send=false；未发送验证码或创建生产验收业务，真实SMTP实收仍待主动发码确认。
+
+## 2026-10-11 自动信号推送开启
+
+用户明确要求配置并启动自动信号推送。私密备份原.env后，将NOTIFICATION_AUTO_SEND改为true并重新创建API/Worker，未修改SMTP、加密密钥或订阅。两个服务均已加载true，公网通知选项auto_send=true、fixture_mode=false、Bark/邮件可用；三个服务运行、重启0、OOM=false，API健康。当前有1条active订阅及active的Bark/邮件渠道，开启前无排队或运行任务。调度每60秒检查一次，在上海时间16点后按最近已收盘交易日与数据覆盖执行，满足订阅规则才生成推送。当前开启时未到16点，不强行提前执行收盘检查；真实邮件/手机实收未宣称验证通过。

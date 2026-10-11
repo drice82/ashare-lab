@@ -9,8 +9,8 @@ from typing import Any
 
 from ashare_lab.dca import ZERO, check_factor_change, confirmed_events, decimal, money
 from ashare_lab.dca import prepare as prepare_market
-from ashare_lab.factors import adjusted_prices
 from ashare_lab.schemas import BacktestRequest
+from ashare_lab.signals import ma_signal
 from ashare_lab.warehouse import MarketRepository
 
 BACKTEST_VERSION = "1.0.1"
@@ -165,32 +165,14 @@ def simulate(
         return receivable, liability, position
 
     def signal_at(day: str) -> tuple[str | None, str | None]:
-        index = all_days.index(day)
-        if index < request.long_window:
-            return None, "均线预热交易日不足，无法确认交叉"
-        directions = []
-        for offset in (1, 0):
-            stop = index + 1 - offset
-            window = all_days[stop - request.long_window : stop]
-            values = adjusted_prices(
-                window,
-                market["bars"],
-                market["factors"],
-                market["factors"].get(all_days[index - offset]),
-            )
-            if values is None or any(v <= 0 for v in values):
-                return None, "均线窗口行情或复权因子缺失"
-            short = sum(values[-request.short_window :]) / request.short_window
-            long = sum(values) / request.long_window
-            difference = short - long
-            directions.append(
-                0.0 if abs(difference) <= max(abs(short), abs(long)) * 1e-12 else difference
-            )
-        if directions[0] <= 0 < directions[1]:
-            return "buy", None
-        if directions[0] >= 0 > directions[1]:
-            return "sell", None
-        return None, None
+        return ma_signal(
+            day,
+            all_days,
+            market["bars"],
+            market["factors"],
+            request.short_window,
+            request.long_window,
+        )
 
     record(start, "contribution", amount=cash, reason="一次性初始投入")
     for index, day in enumerate(days):

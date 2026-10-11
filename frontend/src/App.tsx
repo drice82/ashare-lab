@@ -1,7 +1,11 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import {
   BookOpen,
+  Bell,
   Database,
+  CalendarDays,
+  ChartNoAxesCombined,
+  Layers,
   Filter,
   FlaskConical,
   Menu,
@@ -21,15 +25,17 @@ const Backtest = lazy(() => import("./pages/Backtest"));
 const Portfolio = lazy(() => import("./pages/Portfolio"));
 const Knowledge = lazy(() => import("./pages/Knowledge"));
 
+const Notifications = lazy(() => import("./pages/Notifications"));
+
 const StockDetail = lazy(() => import("./pages/StockDetail"));
 
 const navigation = [
   { to: "/screening", label: "股票筛选", icon: Filter },
-  { to: "/dca", label: "定投模拟", icon: FlaskConical },
-  { to: "/backtest", label: "单股回测", icon: FlaskConical },
-  { to: "/portfolio", label: "组合回测", icon: FlaskConical },
+  { to: "/dca", label: "定投模拟", icon: CalendarDays },
+  { to: "/backtest", label: "单股回测", icon: ChartNoAxesCombined },
+  { to: "/portfolio", label: "组合回测", icon: Layers },
   { to: "/knowledge", label: "知识库", icon: BookOpen },
-  { to: "/data", label: "数据管理", icon: Database },
+  { to: "/notifications", label: "信号通知", icon: Bell },
 ];
 export default function App() {
   const [menu, setMenu] = useState(false);
@@ -87,7 +93,7 @@ export default function App() {
           后续研究能力
         </p>
         <div className="mt-3 space-y-4 px-6 text-sm text-[#839984]">
-          {["策略管理", "信号通知"].map((label) => (
+          {["策略管理"].map((label) => (
             <div key={label} className="flex items-center justify-between">
               <span>{label}</span>
               <span className="text-[9px] text-[#9daf92]">计划开发</span>
@@ -95,11 +101,17 @@ export default function App() {
           ))}
         </div>
         <div className="mt-auto border-t border-[#38533e] p-6 text-[11px] leading-6 text-[#8ea68d]">
-          <p className="flex items-center gap-2">
-            <Shield size={13} />
-            个人研究 · 本地数据
-          </p>
           <p>V0.4 / 组合回测研究版</p>
+          <NavLink
+            to="/data"
+            onClick={() => setMenu(false)}
+            className={({ isActive }) =>
+              `mt-2 inline-flex items-center gap-1.5 text-[10px] ${isActive ? "text-[#d4e0d5] underline" : "text-[#829b85] hover:text-[#d4e0d5]"}`
+            }
+          >
+            <Database size={12} />
+            数据管理
+          </NavLink>
         </div>
       </aside>
       {menu && (
@@ -148,6 +160,11 @@ export default function App() {
               <Route path="/dca" element={<Dca />} />
               <Route path="/backtest" element={<Backtest />} />
               <Route path="/portfolio" element={<Portfolio />} />
+              <Route path="/notifications" element={<Notifications />} />
+              <Route
+                path="/notifications/unsubscribe"
+                element={<Notifications unsubscribe />}
+              />
               <Route path="/knowledge" element={<Knowledge />} />
               <Route path="/stock/:code" element={<StockDetail />} />
               <Route
@@ -164,7 +181,7 @@ export default function App() {
             </Routes>
           </Suspense>
         </main>
-        <footer className="px-9 pb-6 text-[10px] text-muted-foreground">
+        <footer className="w-full px-5 pb-6 text-center text-[10px] text-muted-foreground">
           ashare-lab · 可复核的个人研究工具 · 筛选结果用于进一步研究
         </footer>
       </div>

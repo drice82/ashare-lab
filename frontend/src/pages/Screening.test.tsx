@@ -93,8 +93,9 @@ describe("筛选主要流程", () => {
       </MemoryRouter>,
     );
     await screen.findByLabelText("最低股息率");
+    expect(screen.getByLabelText("最低股息率")).toHaveAttribute("step", "0.1");
     fireEvent.change(screen.getByLabelText("最低股息率"), {
-      target: { value: "5" },
+      target: { value: "3.5" },
     });
     fireEvent.click(screen.getByRole("button", { name: "执行筛选" }));
     await screen.findByText("测试证券");
@@ -102,10 +103,15 @@ describe("筛选主要流程", () => {
       .mocked(fetch)
       .mock.calls.find(([url]) => String(url).endsWith("/screening/run"));
     expect(JSON.parse(String(call?.[1]?.body)).parameters.dividend_min).toBe(
-      0.05,
+      0.035,
     );
     expect(screen.getByText("-4.00%")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole("tab", { name: "筛选结果" })).toHaveAttribute("aria-selected", "true"));
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "筛选结果" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      ),
+    );
     fireEvent.click(screen.getByRole("button", { name: /收盘价/ }));
     await waitFor(() =>
       expect(
@@ -157,7 +163,7 @@ describe("筛选主要流程", () => {
     expect(screen.getByLabelText("最低股息率")).not.toBeVisible();
     fireEvent.click(screen.getByRole("tab", { name: "股票筛选" }));
     expect(
-      (screen.getByLabelText("最低股息率") as HTMLInputElement).valueAsNumber,
+      Number((screen.getByLabelText("最低股息率") as HTMLInputElement).value),
     ).toBeCloseTo(7);
   });
   it("服务失败显示实际错误", async () => {
@@ -178,4 +184,54 @@ describe("筛选主要流程", () => {
       ),
     ).toBe(true);
   });
+});
+
+it("保留小数点编辑并拒绝超过一位小数的股息率", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/screening/rules"))
+        return Response.json({
+          rules: [
+            {
+              id: "A",
+              name: "股息",
+              defaults: { dividend_min: 0.03 },
+              schema: {
+                properties: { dividend_min: { minimum: 0, maximum: 1 } },
+              },
+            },
+          ],
+          factors: [],
+        });
+      if (url.endsWith("/market/status"))
+        return Response.json({
+          latest_market_date: "2026-10-09",
+          datasets: {},
+        });
+      return Response.json([]);
+    }),
+  );
+  render(
+    <MemoryRouter>
+      <Screening />
+    </MemoryRouter>,
+  );
+  const input = (await screen.findByLabelText(
+    "最低股息率",
+  )) as HTMLInputElement;
+  fireEvent.change(input, { target: { value: "3." } });
+  expect(input.value).toBe("3.");
+  fireEvent.change(input, { target: { value: "3.55" } });
+  expect(input.checkValidity()).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "执行筛选" }));
+  expect(
+    vi
+      .mocked(fetch)
+      .mock.calls.some(([url]) => String(url).endsWith("/screening/run")),
+  ).toBe(false);
+  fireEvent.change(input, { target: { value: "3.5" } });
+  expect(input.checkValidity()).toBe(true);
+  fireEvent.blur(input);
+  expect(input.value).toBe("3.5");
 });

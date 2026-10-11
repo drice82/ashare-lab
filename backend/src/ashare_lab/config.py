@@ -20,6 +20,21 @@ class Settings(BaseSettings):
     worker_research_concurrency: int = 2
     worker_poll_seconds: float = 1.0
 
+    notification_encryption_key: SecretStr = SecretStr("")
+    notification_auto_send: bool = False
+    notification_cookie_secure: bool = True
+    notification_public_url: str = "http://localhost:5173"
+    notification_trusted_proxies: str = ""
+    notification_session_days: int = 180
+    notification_subscription_limit: int = 20
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_security: str = "starttls"
+    smtp_username: str = ""
+    smtp_password: SecretStr = SecretStr("")
+    smtp_from_email: str = ""
+    smtp_from_name: str = "ashare-lab"
+
     @model_validator(mode="after")
     def validate_config(self) -> "Settings":
         if (
@@ -36,4 +51,30 @@ class Settings(BaseSettings):
             raise ValueError("WORKER_RESEARCH_CONCURRENCY 必须在 1–2 之间")
         if not self.tushare_http_url.startswith(("https://", "http://")):
             raise ValueError("TUSHARE_HTTP_URL 必须使用 HTTP(S)")
+        from ipaddress import ip_network
+        from urllib.parse import urlsplit
+
+        public_url = urlsplit(self.notification_public_url)
+        if (
+            public_url.scheme not in {"http", "https"}
+            or not public_url.netloc
+            or public_url.path not in {"", "/"}
+            or public_url.query
+            or public_url.fragment
+            or public_url.username
+        ):
+            raise ValueError("NOTIFICATION_PUBLIC_URL 必须是网站origin（协议、域名和端口）")
+
+        for network in self.notification_trusted_proxies.split(","):
+            if network.strip():
+                ip_network(network.strip())
+        if self.smtp_security not in {"starttls", "ssl"}:
+            raise ValueError("SMTP_SECURITY 必须为 starttls 或 ssl")
+        if (
+            not 1 <= self.notification_session_days <= 365
+            or not 1 <= self.notification_subscription_limit <= 100
+        ):
+            raise ValueError("通知会话或订阅上限无效")
+        if not 1 <= self.smtp_port <= 65535:
+            raise ValueError("SMTP_PORT 无效")
         return self
