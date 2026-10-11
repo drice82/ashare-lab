@@ -36,6 +36,7 @@ from ashare_lab.factors import (
     UniverseManager,
 )
 from ashare_lab.instrument_search import search_rank
+from ashare_lab.portfolio_service import PortfolioBacktestService
 from ashare_lab.rules import RULE_VERSION, RuleRegistry
 from ashare_lab.scheduler import (
     SYNC_POLICY,
@@ -69,6 +70,7 @@ class ApplicationService:
         self.registry = RuleRegistry()
         self.dca = DcaService(self.db, self.repository)
         self.backtest = BacktestService(self.db, self.repository)
+        self.portfolio = PortfolioBacktestService(self.db, self.repository)
         self._instrument_cache: OrderedDict[tuple[str, str], tuple[dict[str, Any], ...]] = (
             OrderedDict()
         )

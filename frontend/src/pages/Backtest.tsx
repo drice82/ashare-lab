@@ -4,7 +4,7 @@ import { eventStyles } from "../eventStyles";
 import { dcaPeriodStart } from "../dcaDates";
 import { TaskHistory } from "../components/TaskHistory";
 import { Fragment, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api, downloadCsv, useResource } from "../api";
 import {
   activeJob,
@@ -228,6 +228,13 @@ export default function Backtest() {
       <PageTitle
         title="单股回测"
         subtitle="六策略对比 · 收益与回撤曲线 · 股价买卖点 · 次日开盘模拟"
+        action={
+          <Button asChild variant="outline" size="sm">
+            <Link to="/knowledge" target="_blank" rel="noopener noreferrer">
+              策略说明<span className="sr-only">（新窗口）</span>
+            </Link>
+          </Button>
+        }
       />
       <div className="space-y-5">
         <ErrorBanner

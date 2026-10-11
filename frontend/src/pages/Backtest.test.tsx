@@ -91,6 +91,26 @@ function mockFetch(complete = true, running = false) {
   );
 }
 describe("单股回测", () => {
+  it("策略说明使用新窗口入口，保留当前研究草稿", async () => {
+    mockFetch();
+    render(
+      <MemoryRouter>
+        <Backtest />
+      </MemoryRouter>,
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("开始交易日")).toHaveValue("2023-06-28"),
+    );
+    fireEvent.change(screen.getByLabelText("初始资金（元）"), {
+      target: { value: "123456" },
+    });
+    const link = screen.getByRole("link", { name: /策略说明.*新窗口/ });
+    expect(link).toHaveAttribute("href", "/knowledge");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    expect(screen.getByLabelText("初始资金（元）")).toHaveValue(123456);
+    expect(screen.getByLabelText("开始交易日")).toHaveValue("2023-06-28");
+  });
   it("默认一年，快捷设置2/3/5年且不提交任务", async () => {
     mockFetch();
     render(

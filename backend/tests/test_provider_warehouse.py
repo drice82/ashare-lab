@@ -128,6 +128,47 @@ def test_provider_retry_and_units() -> None:
     assert frame["daily_return"][0] == 0.05
 
 
+@pytest.mark.parametrize("disconnects", [1, 3, 4])
+def test_remote_protocol_error_retries_and_redacts(disconnects: int) -> None:
+    from unittest.mock import patch
+
+    attempts = 0
+    clock = [100.0]
+    delays: list[float] = []
+    marker = "diagnostic-dummy-token"
+
+    def sleep(delay: float) -> None:
+        delays.append(delay)
+        clock[0] += delay
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts <= disconnects:
+            raise httpx.RemoteProtocolError(marker, request=request)
+        return httpx.Response(
+            200, json={"code": 0, "data": {"fields": ["ts_code"], "items": [["000001.SZ"]]}}
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        provider = TushareProvider(
+            Settings(_env_file=None, tushare_token=marker, requests_per_minute=200),
+            client,
+            sleep=sleep,
+        )
+        with patch("ashare_lab.providers.time.monotonic", side_effect=lambda: clock[0]):
+            if disconnects == 4:
+                with pytest.raises(ProviderError) as error:
+                    provider.fetch("daily", {"trade_date": "20240102"})
+                assert error.value.code == "temporary_error"
+                assert marker not in str(error.value)
+            else:
+                assert provider.fetch("daily", {})["ts_code"].to_list() == ["000001.SZ"]
+
+    assert attempts == min(disconnects + 1, 4)
+    assert delays == [1, 2, 4][: min(disconnects, 3)]
+
+
 def test_market_filter_preserves_malformed_codes_for_validation() -> None:
     raw = pl.DataFrame(
         {

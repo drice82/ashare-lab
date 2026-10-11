@@ -54,3 +54,12 @@ jobs新增kind=backtest，payload为BacktestRequest，snapshot固定完整data_v
 ## 多策略结果
 
 新增回测JSON变体`mode: comparison`，公共metadata固定参数、数据版本、fixture_mode及comparison_version；summary记录策略数量、完整数量和整体完整性。strategies数组分别保存strategy_id、label、策略参数/版本、summary、curve、ledger、warnings、assumptions及excess_return。prices保存回测区间原始OHLC供K线使用；不作为信号输入回读。curve中return_rate为总资产/初始资金−1，drawdown为总资产/max(初始资金,截至当日资产峰值)−1。不新增数据库表，不改变旧结果结构。
+
+
+## V0.4 组合结果
+
+jobs新增kind=portfolio，payload为PortfolioRequest（members、allocation、rebalance及公共研究参数），snapshot固定完整data_versions、_portfolio_version、_backtest_version、每种信号的_strategy_version_*及_universe_policy=survivors_v1。无业务表迁移，不改变旧任务语义。
+
+不可变JSON的mode=portfolio。顶层summary/curve/positions/ledger/warnings为实际账户，benchmark包含独立基准账户同类字段；公共parameters/data_versions/fixture_mode/engine_version/strategy_versions/assumptions/prices随结果固定，excess_return仅两者完整时计算。positions按日期保存现金、现金占比和逐股持仓，持仓包含策略、资格、目标/配置/实际权重、估值日期、权益、税负及待执行目标。账本增加stock_code，contribution/rebalance/unknown可为组合事件，buy/sell只对应实际模拟成交。
+
+FIFO买入批次、权益的剩余未确定税股份/金额、已到账状态和已确定税负只属于领域计算，不新增业务表。部分卖出分摊登记金额，最后片段吸收残余分币；中断恢复从原请求重新构造账户，不重复到账或扣税。

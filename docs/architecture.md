@@ -21,7 +21,7 @@ flowchart LR
   DuckDB --> Files
 ```
 
-核心接口：DataProvider.fetch(dataset, params) / capabilities；MarketRepository.read(dataset, version, codes, end_date)；FactorEngine.compute(date, codes, version)；UniverseManager.resolve(date, universe, version)；RuleRegistry.validate / describe；ScreeningEngine.run(request, version)。通用 Strategy、BacktestEngine 扩展协议仍不执行自定义代码；内置单股回测见V0.3。PortfolioService、NotificationService只保留协议。
+核心接口：DataProvider.fetch(dataset, params) / capabilities；MarketRepository.read(dataset, version, codes, end_date)；FactorEngine.compute(date, codes, version)；UniverseManager.resolve(date, universe, version)；RuleRegistry.validate / describe；ScreeningEngine.run(request, version)。通用 Strategy、BacktestEngine 扩展协议仍不执行自定义代码；内置单股回测见V0.3。通用持仓PortfolioService和NotificationService保留协议；内置组合回测见V0.4。
 
 任务在 SQLite 中持久化，提交返回 202。Worker 文件锁确保只有一个任务执行进程，进程内任务可以并发，心跳显示活跃状态，重启时恢复遗留运行任务，取消在安全分片边界生效。筛选固定提交时的数据清单及规则/因子版本，重启可以重算；同步从已发布检查点继续。计算版本发生变化时旧任务明确失败，避免同一任务悄然换用新算法。
 
@@ -112,3 +112,16 @@ API→BacktestService→comparison领域模块→共用单股成交/分红引擎
 ### 研究功能分页（2026-10-10）
 
 股票筛选、定投模拟和单股回测使用参数、结果、历史任务三个分页，通过查询参数 `tab=result` / `tab=history` 与 `run` 定位。成功任务自动进入结果分页，历史查看使用相同入口；各面板保留挂载，任务状态独立于分页展示。首页重定向至股票筛选，研究概览不再提供导航或页面入口。图表与任务名称的股票展示元数据通过任务指定交易日和 `stock_basic` 版本查询，不参与研究规则计算。
+
+
+## V0.4 组合回测
+
+API → PortfolioBacktestService → 组合领域引擎 → MarketRepository。新增kind=portfolio，无业务表迁移；与筛选、定投、单股回测共用两个研究执行名额，不新增内部股票并行线程。行情按固定版本和代码批量裁剪，日历及覆盖共享、每股独立预热；信号复用既有因子及比较模块的定义，账户使用共享现金及逐股FIFO批次、分红权益和部分卖出税负。
+
+实际组合与买入持有基准共享行情加载、独立核算。一个任务原子发布一个不可变JSON，保存完整账本、日持仓、曲线和OHLC；应用服务返回概览、按日期持仓、逐股成交详情和四类全量CSV。portfolio恢复和原子发布加入既有Worker路径；快照固定组合引擎、依赖交易及策略版本，不改变旧研究引擎。数据未知按账户停止，程序失败/取消按整个任务处理。
+
+前端/portfolio懒加载，正式导航位于单股回测与数据管理之间。配置、结果及历史保持挂载；结果使用不可变参数，编辑下一次研究草稿不改变旧结果的名称/版本口径。账本分页独立请求，不卸载收益图表。历史、取消、删除复用既有组件；研究API仍受全站Bearer保护，portfolio列表不要求管理密码，未指定类型的/jobs仍锁定。
+
+## 六策略知识库
+
+`/knowledge` 为懒加载静态前端页面，无 API 请求、认证或数据版本读取。`knowledge.ts` 按现有 `StrategyId` 维护思路、计算口径、人工信号示例和外部教育资料，名称、参数与预热天数复用 `comparison.ts`；研究引擎仍是规则来源，知识库不计算信号或修改任务。页面目录通过 URL hash 使用策略 ID 定位，React Router 的 location 变化驱动标题滚动及键盘焦点，支持刷新和前进/后退。侧栏入口位于组合回测之后，单股回测“策略说明”新窗口打开，以保留原研究草稿；延伸阅读标明机构、英文、新窗口并使用 noopener/noreferrer。首版不包含筛选、定投或组合教程。

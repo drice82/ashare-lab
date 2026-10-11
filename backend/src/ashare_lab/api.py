@@ -10,6 +10,7 @@ from ashare_lab.schemas import (
     BacktestCompareRequest,
     BacktestRequest,
     DcaRequest,
+    PortfolioRequest,
     PresetRequest,
     ScreeningRequest,
     SyncRequest,
@@ -39,7 +40,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         protected = request.url.path.startswith("/api/v1/data/") or (
             request.url.path.rstrip("/") == "/api/v1/jobs"
-            and request.query_params.get("kind") not in {"screening", "dca", "backtest"}
+            and request.query_params.get("kind")
+            not in {"screening", "dca", "backtest", "portfolio"}
         )
         if protected:
             password = settings.data_management_password.get_secret_value()
@@ -122,7 +124,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/v1/jobs")
     def task_list(
-        kind: Literal["sync", "screening", "dca", "backtest"] | None = None,
+        kind: Literal["sync", "screening", "dca", "backtest", "portfolio"] | None = None,
         limit: int = Query(20, ge=1, le=100),
         offset: int = Query(0, ge=0),
     ) -> list[dict[str, Any]]:
@@ -257,6 +259,69 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             service.backtest.export(job_id, view),
             media_type="text/csv",
             headers={"Content-Disposition": f'attachment; filename="backtest-{job_id}.csv"'},
+        )
+
+    @app.get("/api/v1/portfolio/options")
+    def portfolio_options() -> dict[str, Any]:
+        return service.portfolio.options()
+
+    @app.post("/api/v1/portfolio/run", status_code=202)
+    def portfolio_run(request: PortfolioRequest) -> dict[str, Any]:
+        return service.portfolio.submit_portfolio(request)
+
+    @app.delete("/api/v1/portfolio/runs")
+    def delete_all_portfolio() -> dict[str, Any]:
+        return service.delete_jobs("portfolio")
+
+    @app.delete("/api/v1/portfolio/runs/{job_id}")
+    def delete_portfolio(job_id: str) -> dict[str, Any]:
+        return service.delete_job(job_id, "portfolio")
+
+    @app.get("/api/v1/portfolio/runs/{job_id}")
+    def portfolio_job(job_id: str) -> dict[str, Any]:
+        return service.job(job_id, "portfolio")
+
+    @app.post("/api/v1/portfolio/runs/{job_id}/cancel")
+    def portfolio_cancel(job_id: str) -> dict[str, Any]:
+        return service.cancel(job_id, "portfolio")
+
+    @app.get("/api/v1/portfolio/runs/{job_id}/results")
+    def portfolio_results(
+        job_id: str,
+        page: int = Query(1, ge=1),
+        page_size: int = Query(50, ge=1, le=200),
+        account: Literal["portfolio", "benchmark"] = "portfolio",
+    ) -> dict[str, Any]:
+        return service.portfolio.results(job_id, page, page_size, account)
+
+    @app.get("/api/v1/portfolio/runs/{job_id}/positions")
+    def portfolio_positions(
+        job_id: str,
+        date: date | None = None,
+        account: Literal["portfolio", "benchmark"] = "portfolio",
+    ) -> dict[str, Any]:
+        return service.portfolio.positions(job_id, date.isoformat() if date else None, account)
+
+    @app.get("/api/v1/portfolio/runs/{job_id}/stocks/{stock_code}")
+    def portfolio_stock(
+        job_id: str,
+        stock_code: str,
+        page: int = Query(1, ge=1),
+        page_size: int = Query(50, ge=1, le=200),
+        account: Literal["portfolio", "benchmark"] = "portfolio",
+    ) -> dict[str, Any]:
+        return service.portfolio.stock_detail(job_id, stock_code, account, page, page_size)
+
+    @app.get("/api/v1/portfolio/runs/{job_id}/export")
+    def portfolio_export(
+        job_id: str, view: Literal["summary", "curves", "positions", "ledger"] = "ledger"
+    ) -> Response:
+        return Response(
+            service.portfolio.export(job_id, view),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f'attachment; filename="portfolio-{job_id}-{view}.csv"'
+            },
         )
 
     @app.post("/api/v1/dca/run", status_code=202)

@@ -247,7 +247,8 @@ export interface DcaResults {
   parameters: DcaDefinition;
   assumptions: Record<string, string>;
 }
-export interface BacktestDefinition extends Omit<DcaDefinition, "monthly_amount" | "monthly_day"> {
+export interface BacktestDefinition
+  extends Omit<DcaDefinition, "monthly_amount" | "monthly_day"> {
   initial_cash: string;
   strategy: "buy_hold" | "ma_cross";
   short_window: number;
@@ -269,11 +270,20 @@ export interface BacktestJob extends Omit<Job, "kind" | "payload" | "result"> {
 }
 export interface BacktestOptions extends Omit<DcaOptions, "defaults"> {
   comparison_defaults?: { strategies: import("./comparison").StrategyConfig[] };
-  defaults: Omit<BacktestDefinition, "stock_code" | "start_date" | "end_date" | "data_versions">;
+  defaults: Omit<
+    BacktestDefinition,
+    "stock_code" | "start_date" | "end_date" | "data_versions"
+  >;
 }
-export interface BacktestResults extends Omit<DcaResults, "summary" | "items" | "parameters"> {
+export interface BacktestResults
+  extends Omit<DcaResults, "summary" | "items" | "parameters"> {
   summary: BacktestSummary;
   items: (DcaRow & { signal_date: string | null; tax: number })[];
   parameters: BacktestDefinition;
 }
-export type ResearchJob = Job | DcaJob | BacktestJob | import("./comparison").ComparisonJob;
+export type ResearchJob =
+  | Job
+  | DcaJob
+  | BacktestJob
+  | import("./comparison").ComparisonJob
+  | import("./portfolio").PortfolioJob;

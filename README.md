@@ -172,6 +172,8 @@ docker compose up -d api worker
 
 已实现单只沪深A股月度定投模拟：显式选择交易区间和数据版本，配置投入与费用，查看现金/持仓账本、资产曲线及完整CSV。分红仅按确认事件计算，数据不足或复杂公司行动时完整收益未知；期末保留持仓，未计未来卖出补税。详细口径见 [定投规则](docs/dca-rules.md)。
 
-“单股回测”入口支持买入持有、双均线、MACD、RSI、唐奇安突破与布林带回归六策略对比，默认全选、每策略一组可调参数；展示收益/回撤曲线、指标柱状图和未复权K线买卖点。统一次日开盘、T+1及停牌/涨跌停限制，支持持有期分红补税、历史恢复，以及指标/曲线/完整账本CSV。详细口径见 [单股回测规则](docs/backtest-rules.md)。真实仓库隔离验收可运行 `PYTHONPATH=backend/src .venv/bin/python scripts/verify_backtest_real.py --data-dir <真实数据目录>`。多策略真实快照验收可运行 `PYTHONPATH=backend/src .venv/bin/python scripts/verify_comparison_real.py --data-dir <真实数据目录>`（三只股票，独立核对信号/价格/资金/费用；茅台可加 `--initial-cash 300000` 验证成交）。组合回测、自定义策略和信号邮件仍计划开发；不执行用户代码、不接SMTP，也不包含自动交易。
+“单股回测”入口支持买入持有、双均线、MACD、RSI、唐奇安突破与布林带回归六策略对比，默认全选、每策略一组可调参数；展示收益/回撤曲线、指标柱状图和未复权K线买卖点。统一次日开盘、T+1及停牌/涨跌停限制，支持持有期分红补税、历史恢复，以及指标/曲线/完整账本CSV。详细口径见 [单股回测规则](docs/backtest-rules.md)。真实仓库隔离验收可运行 `PYTHONPATH=backend/src .venv/bin/python scripts/verify_backtest_real.py --data-dir <真实数据目录>`。多策略真实快照验收可运行 `PYTHONPATH=backend/src .venv/bin/python scripts/verify_comparison_real.py --data-dir <真实数据目录>`（三只股票，独立核对信号/价格/资金/费用；茅台可加 `--initial-cash 300000` 验证成交）。组合回测支持最多20只固定自选股票、逐股六策略、共享现金、等权/自定义权重、周/月/季/年再平衡、独立买入持有基准和四类CSV，口径见[组合回测规则](docs/portfolio-rules.md)。真实快照验收使用 `PYTHONPATH=backend/src .venv/bin/python scripts/verify_portfolio_real.py --data-dir <真实数据目录>`，追加 `--resource` 验证独立fixture仓库20股五年及两个研究名额并发。动态选股、自定义策略和信号邮件仍计划开发；不执行用户代码、不接SMTP，也不包含自动交易。
 
 新筛选排除数据版本中已退市证券，即使其在历史筛选日仍上市；历史结果存在幸存者偏差，CSV包含股票池策略。已存数据、旧版本和旧任务不删除。名称覆盖截止日早于筛选日时，ST状态仍为未知，相关规则可能返回数据不足；月度更新不代表月内名称状态已确认。
+
+“知识库”页面（`/knowledge`）说明本站六种回测策略的思路、默认参数、预热、买卖信号及局限，附中文教学示例与机构英文延伸阅读。目录支持章节直达链接；单股回测“策略说明”在新窗口打开，保留研究草稿。知识库无需访问密钥，不读取行情或发起研究任务。

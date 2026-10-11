@@ -87,6 +87,8 @@ export function TaskTable({
                       version={job.payload.data_versions?.stock_basic}
                     />
                   </>
+                ) : job.kind === "portfolio" ? (
+                  `组合 · ${job.payload.members.length}只股票`
                 ) : job.kind === "screening" ? (
                   `规则 ${job.payload.rule_id} · ${job.payload.as_of_date}`
                 ) : job.payload.mode === "namechange" ? (
@@ -109,7 +111,9 @@ export function TaskTable({
                       : "沪深 A 股股票池"}
                   </p>
                 )}
-                {(job.kind === "dca" || job.kind === "backtest") && (
+                {(job.kind === "dca" ||
+                  job.kind === "backtest" ||
+                  job.kind === "portfolio") && (
                   <p className="mt-1 text-xs text-muted-foreground">
                     {job.payload.start_date} 至 {job.payload.end_date}
                   </p>
@@ -143,7 +147,7 @@ export function TaskTable({
                   </button>
                 ) : (
                   <Link
-                    to={`/${job.kind === "backtest" ? "backtest" : job.kind === "dca" ? "dca" : "screening"}?run=${job.id}`}
+                    to={`/${job.kind === "portfolio" ? "portfolio" : job.kind === "backtest" ? "backtest" : job.kind === "dca" ? "dca" : "screening"}?run=${job.id}`}
                     className="inline-flex items-center gap-1 text-primary"
                   >
                     查看

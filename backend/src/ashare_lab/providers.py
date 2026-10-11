@@ -269,7 +269,7 @@ class TushareProvider:
                 return pl.DataFrame(
                     data["items"], schema=data["fields"], orient="row", infer_schema_length=None
                 )
-            except (httpx.TimeoutException, httpx.NetworkError):
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError):
                 error = ProviderError("temporary_error", f"{dataset} 请求超时或网络失败")
             except (ValueError, httpx.HTTPStatusError):
                 raise ProviderError("provider_error", f"{dataset} HTTP 或 JSON 响应异常") from None

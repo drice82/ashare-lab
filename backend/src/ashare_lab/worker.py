@@ -18,6 +18,7 @@ from ashare_lab.config import Settings
 from ashare_lab.db import Database, identifier, jobs, now
 from ashare_lab.dca import DCA_VERSION, prepare, simulate
 from ashare_lab.factors import FACTOR_VERSION
+from ashare_lab.portfolio import PORTFOLIO_VERSION, prepare_portfolio, simulate_portfolio
 from ashare_lab.providers import DataProvider, ProviderError, TushareProvider
 from ashare_lab.rules import RULE_VERSION
 from ashare_lab.scheduler import (
@@ -28,7 +29,13 @@ from ashare_lab.scheduler import (
     MonthlyNameScheduler,
     create_scheduler,
 )
-from ashare_lab.schemas import BacktestCompareRequest, BacktestRequest, DcaRequest, ScreeningRequest
+from ashare_lab.schemas import (
+    BacktestCompareRequest,
+    BacktestRequest,
+    DcaRequest,
+    PortfolioRequest,
+    ScreeningRequest,
+)
 from ashare_lab.screening import ScreeningEngine
 from ashare_lab.sync import SyncService
 from ashare_lab.warehouse import MarketRepository
@@ -64,7 +71,7 @@ class Worker:
                 status, error = "queued", None
                 if job["cancel_requested"]:
                     status = "cancelled"
-                elif job["kind"] in {"screening", "dca", "backtest"}:
+                elif job["kind"] in {"screening", "dca", "backtest", "portfolio"}:
                     interruptions = snapshot.get("_recovery_interruptions", 0) + 1
                     snapshot["_recovery_interruptions"] = interruptions
                     if interruptions >= 3:
@@ -176,11 +183,24 @@ class Worker:
                 if completion_prepared:
                     return
                 status = "partial" if result["warnings"] else "succeeded"
-            elif job["kind"] in {"dca", "backtest"}:
+            elif job["kind"] in {"dca", "backtest", "portfolio"}:
+                portfolio = job["kind"] == "portfolio"
                 backtest = job["kind"] == "backtest"
                 comparison = backtest and "strategies" in job["payload"]
-                engine_version = BACKTEST_VERSION if backtest else DCA_VERSION
-                version_key = "_backtest_version" if backtest else "_dca_version"
+                engine_version = (
+                    PORTFOLIO_VERSION
+                    if portfolio
+                    else BACKTEST_VERSION
+                    if backtest
+                    else DCA_VERSION
+                )
+                version_key = (
+                    "_portfolio_version"
+                    if portfolio
+                    else "_backtest_version"
+                    if backtest
+                    else "_dca_version"
+                )
                 if job["snapshot"].get(version_key) != engine_version or (
                     backtest
                     and not comparison
@@ -189,7 +209,11 @@ class Worker:
                     raise ProviderError(
                         "incompatible_engine_version", "研究引擎版本不兼容，请使用对应版本执行"
                     )
-                request_dca = DcaRequest.model_validate(job["payload"]) if not backtest else None
+                request_dca = (
+                    DcaRequest.model_validate(job["payload"])
+                    if not backtest and not portfolio
+                    else None
+                )
                 request_backtest = (
                     BacktestRequest.model_validate(job["payload"])
                     if backtest and not comparison
@@ -198,7 +222,31 @@ class Worker:
                 pinned = {k: v for k, v in job["snapshot"].items() if not k.startswith("_")}
                 if job["payload"]["data_versions"] != pinned:
                     raise ProviderError("invalid_version", "研究任务参数与固定快照不一致")
-                if comparison:
+                if portfolio:
+                    request_portfolio = PortfolioRequest.model_validate(job["payload"])
+                    strategy_versions = {
+                        m.strategy.id: STRATEGY_VERSION
+                        if m.strategy.id in {"buy_hold", "ma_cross"}
+                        else COMPARISON_VERSION
+                        for m in request_portfolio.members
+                    }
+                    if job["snapshot"].get("_backtest_version") != BACKTEST_VERSION or any(
+                        job["snapshot"].get(f"_strategy_version_{key}") != value
+                        for key, value in strategy_versions.items()
+                    ):
+                        raise ProviderError(
+                            "incompatible_engine_version", "组合依赖的交易或策略版本不兼容"
+                        )
+                    output = simulate_portfolio(
+                        request_portfolio,
+                        prepare_portfolio(
+                            request_portfolio, self.repository, lambda: self.check(job_id)
+                        ),
+                        lambda: self.check(job_id),
+                        lambda value: self.db.update(job_id, progress=value * 0.95),
+                    )
+                    output["strategy_versions"] = strategy_versions
+                elif comparison:
                     request_compare = BacktestCompareRequest.model_validate(job["payload"])
                     if job["snapshot"].get("_comparison_version") != COMPARISON_VERSION or any(
                         job["snapshot"].get(f"_strategy_version_{item.id}")

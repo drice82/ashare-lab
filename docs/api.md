@@ -81,3 +81,22 @@ localhost研究接口默认无全站认证，管理接口仍要求独立密码�
 `GET /backtest/runs/{id}/strategies/{strategy_id}?page=1&page_size=50`返回对应策略汇总/曲线、prices（未复权OHLC）、trades（完整买卖记录）及分页items/total/page/page_size。未知策略或旧单策略任务返回404；未发布返回409，分页大小最大200。
 
 `GET /backtest/runs/{id}/export?view=summary|curves|ledger`导出全部策略对应CSV，默认ledger；非法view返回422。旧任务导出格式保持原样。
+
+
+## 组合回测
+
+`GET /portfolio/options`返回公共默认资金/费用、allocation=equal、rebalance=monthly、comparison_strategies、固定数据版本候选、交易日历、fixture_mode及maximum_members=20。
+
+`POST /portfolio/run`返回202。公共字段为start_date/end_date/initial_cash/commission_rate/minimum_commission/transfer_rate/stamp_rate/data_versions，范围沿用单股回测；不接受顶层stock_code或单股策略字段。members为1–20项、股票代码唯一，每项stock_code、strategy（沿用StrategyConfig，默认buy_hold）、可选weight。allocation=equal（默认）时不得指定非空weight；custom要求每股weight>0且≤1、最多六位小数、合计精确为1。rebalance=none|weekly|monthly|quarterly|yearly，默认monthly。数据版本、存续证券和交易日历在应用服务验证，非法输入422、未就绪409。
+
+`GET /portfolio/runs/{id}`、`POST /portfolio/runs/{id}/cancel`、`GET /jobs?kind=portfolio`沿用研究认证。`DELETE /portfolio/runs/{id}`和`DELETE /portfolio/runs`沿用结束状态限制、活动任务保留及数据版本保留语义，只删除组合类型历史。
+
+`GET /portfolio/runs/{id}/results?page=1&page_size=50&account=portfolio`返回实际summary/curve、benchmark（summary/curve/warnings）、excess_return、公共参数/版本/fixture/assumptions和所选账户的分页items/total/page/page_size。account=portfolio|benchmark只切换分页账本，不更改顶层实际摘要；page_size最大200。完整性逐账户判断，succeeded不代表收益完整。
+
+`GET /portfolio/runs/{id}/positions?date=YYYY-MM-DD&account=portfolio`返回该账户指定确认交易日的date/cash/cash_weight/items；不传date取最后确认日，完全未知时items为空。显式日期无确认持仓返回404。逐股字段包括stock_code/name/strategy/shares/price/valuation_date/position_value/receivable/tax_liability/configured_weight/target_weight/actual_weight/eligible/pending_order，pending_order保存signal_date与target_value。
+
+`GET /portfolio/runs/{id}/stocks/{stock_code}?account=portfolio&page=1&page_size=50`返回固定版本原始OHLC、该股完整实际成交trades、逐股分页账本和账户警告。股票不属于组合404；无合成行情。股票名称使用保存的基础版本，不以当前名称推定历史ST。
+
+`GET /portfolio/runs/{id}/export?view=summary|curves|positions|ledger`默认ledger，UTF-8 BOM CSV导出两个账户的全量数据，不受账本分页或当前账户选择影响。每行含account、完整性、fixture_mode、参数、data_versions、engine_version、strategy_versions、警告和假设；未知空结果也提供元数据。
+
+账本字段date/event/stock_code/signal_date/shares_delta/price/amount/fee/tax/cash/shares/reason。buy的amount为负成交额，sell为正，费用和已到账权益卖出补税分别扣除。dividend的amount为税前到账金额，tax为本次派息扣除的已确定税负，因此该事件净现金变动为amount−tax。entitlement仅登记权益，不改变现金。新增rebalance周期调仓和below_lot单位不足；insufficient_cash说明未完成目标本次结束。规则详见portfolio-rules.md。

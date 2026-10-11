@@ -1,14 +1,16 @@
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import httpx
 import polars as pl
 import pytest
 from ashare_lab.config import Settings
 from ashare_lab.db import Database
 from ashare_lab.fixtures import fixture_frames
-from ashare_lab.providers import FIELDS, ProviderError
+from ashare_lab.providers import FIELDS, ProviderError, TushareProvider
 from ashare_lab.schemas import SyncRequest
 from ashare_lab.services import ApplicationService
 from ashare_lab.worker import Worker
@@ -227,6 +229,64 @@ def test_real_sync_pipeline_resume_and_no_duplicates(tmp_path: Path) -> None:
     )
     worker.run_once()
     assert service.repository.read("daily", service.db.snapshot()).height == 2
+
+
+def test_remote_disconnect_resume_preserves_checkpoints_and_old_versions(tmp_path: Path) -> None:
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path,
+        database_path=tmp_path / "business.db",
+        tushare_token="diagnostic-dummy-token",
+        sync_concurrency=1,
+    )
+    service = ApplicationService(settings)
+    fixture = MiniProvider()
+    disconnected = True
+    failures = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal failures
+        body = json.loads(request.content)
+        dataset, params = body["api_name"], body["params"]
+        if disconnected and dataset == "daily" and params.get("trade_date") == "20240628":
+            failures += 1
+            raise httpx.RemoteProtocolError("diagnostic-dummy-token", request=request)
+        frame = fixture.fetch(dataset, params)
+        fields = frame.columns or FIELDS[dataset].split(",")
+        return httpx.Response(
+            200, json={"code": 0, "data": {"fields": fields, "items": frame.rows()}}
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        provider = TushareProvider(settings, client, sleep=lambda _: None)
+        worker = Worker(settings, provider)
+        request = SyncRequest(mode="initialize", start_date="2024-06-27", end_date="2024-06-28")
+        job = service.submit_sync(request)
+        worker.run_once()
+        outcome = service.job(job["id"])
+        assert outcome["status"] == "failed"
+        assert "temporary_error" in outcome["error"]
+        assert "diagnostic-dummy-token" not in str(outcome)
+        assert failures == 4
+        old_snapshot = service.db.snapshot()
+        old_rows = service.repository.read("daily", old_snapshot).to_dicts()
+        assert len(old_rows) == 1
+
+        disconnected = False
+        fixture.calls.clear()
+        service.resume(job["id"])
+        worker.run_once()
+        assert service.job(job["id"])["status"] == "succeeded"
+        assert not any(
+            dataset == "daily" and params.get("trade_date") == "20240627"
+            for dataset, params in fixture.calls
+        )
+        assert service.repository.read("daily", old_snapshot).to_dicts() == old_rows
+        assert service.repository.read("daily", service.db.snapshot()).height == 2
+        repeated = service.submit_sync(request)
+        worker.run_once()
+        assert service.job(repeated["id"])["status"] == "succeeded"
+        assert service.repository.read("daily", service.db.snapshot()).height == 2
 
 
 def test_optional_permission_failure_is_partial_not_success(tmp_path: Path) -> None:

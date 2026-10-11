@@ -95,8 +95,7 @@ class DcaRequest(StrictModel):
         return self
 
 
-class BacktestCommonRequest(StrictModel):
-    stock_code: StockCode
+class ResearchCommonRequest(StrictModel):
     start_date: date
     end_date: date
     initial_cash: Annotated[Decimal, Field(gt=0, le=100_000_000, decimal_places=2)] = Decimal(
@@ -109,7 +108,7 @@ class BacktestCommonRequest(StrictModel):
     data_versions: dict[str, str] = Field(min_length=1, max_length=20)
 
     @model_validator(mode="after")
-    def validate_range(self) -> "BacktestCommonRequest":
+    def validate_range(self) -> "ResearchCommonRequest":
         if self.start_date > self.end_date:
             raise ValueError("开始日期不能晚于结束日期")
         if self.end_date > datetime.now(ZoneInfo("Asia/Shanghai")).date():
@@ -117,6 +116,10 @@ class BacktestCommonRequest(StrictModel):
         if (self.end_date - self.start_date).days > 36525:
             raise ValueError("回测区间不能超过100年")
         return self
+
+
+class BacktestCommonRequest(ResearchCommonRequest):
+    stock_code: StockCode
 
 
 class BacktestRequest(BacktestCommonRequest):
@@ -188,4 +191,30 @@ class BacktestCompareRequest(BacktestCommonRequest):
     def unique_strategies(self) -> "BacktestCompareRequest":
         if len({item.id for item in self.strategies}) != len(self.strategies):
             raise ValueError("每种策略最多选择一组参数")
+        return self
+
+
+class PortfolioMember(StrictModel):
+    stock_code: StockCode
+    strategy: StrategyConfig = Field(default_factory=lambda: StrategyConfig(id="buy_hold"))
+    weight: Annotated[Decimal, Field(gt=0, le=1, decimal_places=6)] | None = None
+
+
+class PortfolioRequest(ResearchCommonRequest):
+    members: list[PortfolioMember] = Field(min_length=1, max_length=20)
+    allocation: Literal["equal", "custom"] = "equal"
+    rebalance: Literal["none", "weekly", "monthly", "quarterly", "yearly"] = "monthly"
+
+    @model_validator(mode="after")
+    def validate_members(self) -> "PortfolioRequest":
+        if len({member.stock_code for member in self.members}) != len(self.members):
+            raise ValueError("组合股票不得重复")
+        if self.allocation == "custom":
+            if (
+                any(member.weight is None for member in self.members)
+                or sum((member.weight or Decimal(0) for member in self.members), Decimal(0)) != 1
+            ):
+                raise ValueError("自定义权重必须逐股指定且合计为100%")
+        elif any(member.weight is not None for member in self.members):
+            raise ValueError("等权模式不得指定自定义权重")
         return self

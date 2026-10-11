@@ -95,7 +95,23 @@ export function ComparisonChart({
   );
 }
 
-export function TradeChart({ detail }: { detail: StrategyDetail }) {
+export function TradeChart({
+  detail,
+}: {
+  detail: {
+    label: string;
+    prices: StrategyDetail["prices"];
+    trades: {
+      date: string;
+      event: string;
+      shares_delta: number;
+      price: number | null;
+      signal_date: string | null;
+      fee: number;
+      tax: number;
+    }[];
+  };
+}) {
   const host = useRef<HTMLDivElement>(null);
   const tooltip = useRef<HTMLParagraphElement>(null);
   useEffect(() => {

@@ -1,5 +1,13 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import { Database, Filter, FlaskConical, Menu, Shield, X } from "lucide-react";
+import {
+  BookOpen,
+  Database,
+  Filter,
+  FlaskConical,
+  Menu,
+  Shield,
+  X,
+} from "lucide-react";
 import { Link, NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { setAccessToken } from "./api";
 
@@ -10,6 +18,8 @@ import { Button } from "./components/ui/button";
 
 const Dca = lazy(() => import("./pages/Dca"));
 const Backtest = lazy(() => import("./pages/Backtest"));
+const Portfolio = lazy(() => import("./pages/Portfolio"));
+const Knowledge = lazy(() => import("./pages/Knowledge"));
 
 const StockDetail = lazy(() => import("./pages/StockDetail"));
 
@@ -17,6 +27,8 @@ const navigation = [
   { to: "/screening", label: "股票筛选", icon: Filter },
   { to: "/dca", label: "定投模拟", icon: FlaskConical },
   { to: "/backtest", label: "单股回测", icon: FlaskConical },
+  { to: "/portfolio", label: "组合回测", icon: FlaskConical },
+  { to: "/knowledge", label: "知识库", icon: BookOpen },
   { to: "/data", label: "数据管理", icon: Database },
 ];
 export default function App() {
@@ -75,7 +87,7 @@ export default function App() {
           后续研究能力
         </p>
         <div className="mt-3 space-y-4 px-6 text-sm text-[#839984]">
-          {["组合回测", "策略管理", "信号通知"].map((label) => (
+          {["策略管理", "信号通知"].map((label) => (
             <div key={label} className="flex items-center justify-between">
               <span>{label}</span>
               <span className="text-[9px] text-[#9daf92]">计划开发</span>
@@ -87,7 +99,7 @@ export default function App() {
             <Shield size={13} />
             个人研究 · 本地数据
           </p>
-          <p>V0.3 / 单股回测研究版</p>
+          <p>V0.4 / 组合回测研究版</p>
         </div>
       </aside>
       {menu && (
@@ -116,7 +128,7 @@ export default function App() {
             <span className="hidden text-xs text-muted-foreground sm:block">
               收盘后研究 · Asia/Shanghai
             </span>
-            <span className="badge border border-[#d8e5d3]">V0.3</span>
+            <span className="badge border border-[#d8e5d3]">V0.4</span>
             <button
               title="配置访问密钥"
               aria-label="配置访问密钥"
@@ -135,6 +147,8 @@ export default function App() {
               <Route path="/screening" element={<Screening />} />
               <Route path="/dca" element={<Dca />} />
               <Route path="/backtest" element={<Backtest />} />
+              <Route path="/portfolio" element={<Portfolio />} />
+              <Route path="/knowledge" element={<Knowledge />} />
               <Route path="/stock/:code" element={<StockDetail />} />
               <Route
                 path="*"
