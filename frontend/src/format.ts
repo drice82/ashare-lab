@@ -43,6 +43,20 @@ export function formatPercent(
     ? missing
     : `${(value * 100).toFixed(2)}%`;
 }
+
+/** Base-unit values; thresholds also apply to negative amounts by magnitude. */
+export function formatCompactNumber(
+  value: number | null | undefined,
+  suffix = "",
+): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const magnitude = Math.abs(value);
+  if (magnitude > 1e9) return `${(value / 1e8).toFixed(1)}亿${suffix}`;
+  if (magnitude > 1e6)
+    return `${(value / 1e4).toLocaleString("zh-CN", { maximumFractionDigits: 0 })}万${suffix}`;
+  if (suffix === "元") return formatMoney(value);
+  return `${value.toLocaleString("zh-CN")}${suffix}`;
+}
 const signedFactors = new Set([
   "daily_return",
   "return_20d",
@@ -61,14 +75,19 @@ export function factorClass(
 export function formatFactor(
   key: string,
   value: FactorValue | undefined,
+  compact = false,
 ): string {
   if (value === null || value === undefined) return "—";
   if (typeof value === "boolean") return value ? "是" : "否";
   if (percentFactors.has(key)) return formatPercent(value);
   if (key.includes("volume_ratio") || key.endsWith("_ratio"))
     return `${value.toFixed(2)}倍`;
-  if (key === "amount_mean_20d") return formatMoney(value);
-  if (key === "volume") return `${value.toLocaleString("zh-CN")}股`;
+  if (key === "amount_mean_20d")
+    return compact ? formatCompactNumber(value, "元") : formatMoney(value);
+  if (key === "volume")
+    return compact
+      ? formatCompactNumber(value, "股")
+      : `${value.toLocaleString("zh-CN")}股`;
   if (key === "valid_days_20d") return `${value}日`;
   return formatMoney(value);
 }

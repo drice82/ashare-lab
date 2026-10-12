@@ -179,6 +179,8 @@ class FactorEngine:
             if current is None:
                 flags.append("missing_current_bar")
             else:
+                if current.get("quality_reason"):
+                    flags.append(current["quality_reason"])
                 values.update(close=current["close"], volume=current["volume"])
                 if current.get("volume") is None:
                     flags.append("missing_current_volume")
@@ -274,7 +276,9 @@ class FactorEngine:
             amounts = observations("amount", 20)
             if amounts:
                 values["amount_mean_20d"] = float(np.mean(amounts))
-            values["valid_days_20d"] = sum(day in rows for day in window_days[-20:])
+            values["valid_days_20d"] = sum(
+                day in rows and rows[day].get("close") is not None for day in window_days[-20:]
+            )
             if len(window_days) < 20 or values["valid_days_20d"] < 20:
                 flags.append("insufficient_20d_bars")
             if not anchor or prices("close", 20) is None:

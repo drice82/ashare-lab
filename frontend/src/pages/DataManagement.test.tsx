@@ -62,10 +62,10 @@ it("显示月度计划并独立提交名称任务，不使用行情日期", asyn
     </MemoryRouter>,
   );
   expect(fetch).not.toHaveBeenCalled();
-  fireEvent.change(screen.getByLabelText("数据管理密码"), {
+  fireEvent.change(screen.getByLabelText("后台管理密码"), {
     target: { value: "test-management" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "解锁数据管理" }));
+  fireEvent.click(screen.getByRole("button", { name: "解锁后台管理" }));
   await screen.findByText(/每月第一个星期六 05:00/);
   expect(await screen.findByText(/月内新增或撤销 ST/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "立即更新历史名称" }));
@@ -87,10 +87,10 @@ it("显示每日分红计划并提交独立分红，不使用行情日期", asyn
     </MemoryRouter>,
   );
   expect(fetch).not.toHaveBeenCalled();
-  fireEvent.change(screen.getByLabelText("数据管理密码"), {
+  fireEvent.change(screen.getByLabelText("后台管理密码"), {
     target: { value: "test-management" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "解锁数据管理" }));
+  fireEvent.click(screen.getByRole("button", { name: "解锁后台管理" }));
   await screen.findByText(/每天 01:00/);
   expect(await screen.findByText(/最近任务：部分完成/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "立即更新分红" }));
@@ -112,10 +112,10 @@ it("显示收盘后每日增量计划", async () => {
     </MemoryRouter>,
   );
   expect(fetch).not.toHaveBeenCalled();
-  fireEvent.change(screen.getByLabelText("数据管理密码"), {
+  fireEvent.change(screen.getByLabelText("后台管理密码"), {
     target: { value: "test-management" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "解锁数据管理" }));
+  fireEvent.click(screen.getByRole("button", { name: "解锁后台管理" }));
   await screen.findByText(/每天 16:00/);
   expect(screen.getByText(/增量同步不包含分红与历史名称/)).toBeInTheDocument();
 });
@@ -123,7 +123,7 @@ it("显示收盘后每日增量计划", async () => {
 it("错误密码保持锁定，重新挂载需要重新输入", async () => {
   vi.mocked(fetch).mockResolvedValueOnce(
     Response.json(
-      { code: "data_management_locked", message: "数据管理密码缺失或错误" },
+      { code: "data_management_locked", message: "后台管理密码缺失或错误" },
       { status: 403 },
     ),
   );
@@ -133,16 +133,16 @@ it("错误密码保持锁定，重新挂载需要重新输入", async () => {
     </MemoryRouter>,
   );
   expect(fetch).not.toHaveBeenCalled();
-  fireEvent.change(screen.getByLabelText("数据管理密码"), {
+  fireEvent.change(screen.getByLabelText("后台管理密码"), {
     target: { value: "wrong" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "解锁数据管理" }));
-  await screen.findByText("数据管理密码缺失或错误");
+  fireEvent.click(screen.getByRole("button", { name: "解锁后台管理" }));
+  await screen.findByText("后台管理密码缺失或错误");
   expect(fetch).toHaveBeenCalledTimes(1);
-  fireEvent.change(screen.getByLabelText("数据管理密码"), {
+  fireEvent.change(screen.getByLabelText("后台管理密码"), {
     target: { value: "test-management" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "解锁数据管理" }));
+  fireEvent.click(screen.getByRole("button", { name: "解锁后台管理" }));
   await screen.findByText(/每天 16:00/);
   for (const [, options] of vi.mocked(fetch).mock.calls.slice(1)) {
     expect(
@@ -157,7 +157,7 @@ it("错误密码保持锁定，重新挂载需要重新输入", async () => {
       <DataManagement />
     </MemoryRouter>,
   );
-  expect(screen.getByLabelText("数据管理密码")).toHaveValue("");
+  expect(screen.getByLabelText("后台管理密码")).toHaveValue("");
 });
 
 it("认证失效锁回页面并停止轮询", async () => {
@@ -166,13 +166,13 @@ it("认证失效锁回页面并停止轮询", async () => {
       <DataManagement />
     </MemoryRouter>,
   );
-  fireEvent.change(screen.getByLabelText("数据管理密码"), {
+  fireEvent.change(screen.getByLabelText("后台管理密码"), {
     target: { value: "test-management" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "解锁数据管理" }));
+  fireEvent.click(screen.getByRole("button", { name: "解锁后台管理" }));
   await screen.findByText(/每天 16:00/);
   window.dispatchEvent(new Event("ashare-data-locked"));
-  await screen.findByLabelText("数据管理密码");
+  await screen.findByLabelText("后台管理密码");
   expect(screen.queryByText("本地数据集")).not.toBeInTheDocument();
 });
 
@@ -182,10 +182,10 @@ it("同步任务独立页签，解锁后主页面不读取历史", async () => {
       <DataManagement />
     </MemoryRouter>,
   );
-  fireEvent.change(screen.getByLabelText("数据管理密码"), {
+  fireEvent.change(screen.getByLabelText("后台管理密码"), {
     target: { value: "test-management" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "解锁数据管理" }));
+  fireEvent.click(screen.getByRole("button", { name: "解锁后台管理" }));
   await screen.findByText(/每天 16:00/);
   expect(
     vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/jobs?")),
@@ -247,10 +247,10 @@ it("数据管理保留版本编号，同步恢复在历史页签操作", async (
       <DataManagement />
     </MemoryRouter>,
   );
-  fireEvent.change(screen.getByLabelText("数据管理密码"), {
+  fireEvent.change(screen.getByLabelText("后台管理密码"), {
     target: { value: "test-management" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "解锁数据管理" }));
+  fireEvent.click(screen.getByRole("button", { name: "解锁后台管理" }));
   expect(await screen.findByText("daily · version-")).toHaveAttribute(
     "title",
     "version-original",

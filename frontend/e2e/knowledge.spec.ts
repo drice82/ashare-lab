@@ -2,14 +2,20 @@ import { expect, test } from "@playwright/test";
 
 test.use({ trace: "off" });
 
-test("知识库无需API：章节定位、键盘、刷新、历史与响应式目录", async ({
+test("知识库无需研究API：上报失败、章节定位、键盘、刷新、历史与响应式目录", async ({
   page,
 }) => {
   const errors: string[] = [];
   const apiRequests: string[] = [];
+  await page.route("**/api/v1/analytics/pageviews", (route) => route.abort());
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("request", (request) => {
-    if (request.url().includes("/api/")) apiRequests.push(request.url());
+    if (
+      request.url().includes("/api/") &&
+      !request.url().endsWith("/api/v1/analytics/pageviews") &&
+      !request.url().endsWith("/api/v1/notifications/session")
+    )
+      apiRequests.push(request.url());
   });
   await page.goto("/knowledge#rsi_reversal");
   await expect(
@@ -112,7 +118,11 @@ test("实际fixture API接入回测：新窗口阅读策略说明后原参数保
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("request", (request) => {
-    if (request.url().includes("/api/") && request.method() !== "GET")
+    if (
+      request.url().includes("/api/") &&
+      !request.url().endsWith("/api/v1/analytics/pageviews") &&
+      request.method() !== "GET"
+    )
       writes.push(request.method());
   });
   await page.goto("/backtest");

@@ -8,14 +8,20 @@ test.skip(
   "Requires an isolated fixture API with a private code capture file; never run against production.",
 );
 
+const lastCodeSent = new Map<string, number>();
+
 async function emailCode(page: Page, address: string, change = false) {
   await page
     .getByLabel(change ? "新邮箱" : "登录邮箱", { exact: true })
     .fill(address);
+  const previous = lastCodeSent.get(address.toLowerCase());
+  if (previous)
+    await page.waitForTimeout(Math.max(0, 60000 - (Date.now() - previous)));
   await page
     .getByRole("button", { name: change ? "发送更换验证码" : "发送登录验证码" })
     .click();
   await expect(page.getByRole("button", { name: /秒后重发/ })).toBeDisabled();
+  lastCodeSent.set(address.toLowerCase(), Date.now());
   const codes = JSON.parse(
     readFileSync(process.env.NOTIFICATION_E2E_CODE_FILE!, "utf8"),
   ) as Record<string, string>;
@@ -172,9 +178,9 @@ test("三个通知页签、紧凑订阅卡片和菜单在桌面与手机可用",
     fullPage: true,
   });
   const nav = page.locator("aside nav");
-  await expect(nav.getByRole("link", { name: "数据管理" })).toHaveCount(0);
+  await expect(nav.getByRole("link", { name: "后台管理" })).toHaveCount(0);
   await expect(
-    page.locator("aside").getByRole("link", { name: "数据管理" }),
+    page.locator("aside").getByRole("link", { name: "后台管理" }),
   ).toBeVisible();
   await page.getByLabel("策略", { exact: true }).selectOption("ma_cross");
   await page.getByLabel("短周期").fill("10");
@@ -206,9 +212,9 @@ test("三个通知页签、紧凑订阅卡片和菜单在桌面与手机可用",
     }
   }
   await page.getByRole("button", { name: "打开导航" }).click();
-  await page.locator("aside").getByRole("link", { name: "数据管理" }).click();
+  await page.locator("aside").getByRole("link", { name: "后台管理" }).click();
   await expect(
-    page.getByRole("button", { name: "解锁数据管理" }),
+    page.getByRole("button", { name: "解锁后台管理" }),
   ).toBeVisible();
   expect(errors).toEqual([]);
 });

@@ -31,6 +31,7 @@ import { ErrorBanner, Loading, PageTitle } from "../components/common";
 import ModuleTabs from "../components/ModuleTabs";
 import { TaskHistory } from "../components/TaskHistory";
 import StockInput from "../components/StockInput";
+import WatchlistPicker from "../components/WatchlistPicker";
 import StockIdentity from "../components/StockIdentity";
 import PortfolioCharts from "../components/PortfolioCharts";
 import { TradeChart } from "../components/ComparisonCharts";
@@ -768,6 +769,22 @@ export default function Portfolio() {
                 multiple
                 asOfDate={definition.start_date}
                 dataVersion={definition.data_versions.stock_basic}
+              />
+              <WatchlistPicker
+                maximum={20}
+                replace
+                hasMembers={definition.members.length > 0}
+                onApply={(codes) => {
+                  setError("");
+                  setDefinition((current) => ({
+                    ...current,
+                    allocation: "equal",
+                    members: codes.map((stock_code) => ({
+                      stock_code,
+                      strategy: { id: "buy_hold" },
+                    })),
+                  }));
+                }}
               />
               <div className="flex flex-wrap items-end gap-3">
                 <label>

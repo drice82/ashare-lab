@@ -86,3 +86,37 @@ outbox状态pending/sending/accepted/failed/cancelled/expired。accepted仅指�
 
 
 0007新增notification_test_requests（id、owner_id、timestamp）记录所有实际发起的手动渠道/订阅测试额度，按账号滚动窗口读取；BEGIN IMMEDIATE事务原子检查并预留。notification_test_deliveries保存订阅示例的request_id、owner_id、subscription_id、trade_date、direction、channel、status、attempts、error、created_at、accepted_at及outcome快照；不关联真实notification_checks，不受真实信号去重唯一约束。进程中断保留unknown，不进入Worker恢复/重试队列。新表与Alembic版本标记同事务，中断可回滚重试，历史记录和旧版本研究数据保持可读。
+
+### 日线OHLC异常隔离（schema_version=2）
+
+新股票池任务标准化日线时增加可空字符串quality_reason/raw_ohlc。OHLC关系矛盾时quality_reason=ohlc_inconsistent，raw_ohlc为保留原始open/high/low/close/pre_close的JSON字符串；所有可计算市场数值（含volume/amount/daily_return）置空，保留股票/日期及来源信息。健康行两个字段为空。旧schema_version=1文件及严格标准化接口继续可读，混合文件按列名合并。
+
+覆盖记录的complete仍表示接口范围获取完成，quality_status=degraded和quarantined_ohlc记录已隔离条目；不能将complete解释为所有报价有效。任务完成时按指定范围当前覆盖条目汇总异常数，存在异常则partial；恢复跳过已发布检查点也不会丢失异常警告。供应商后续修正可覆盖新版本的隔离记录，旧版本仍保留原始证据及未知值。
+
+## 企业资料缓存与近期分红结果
+
+无结构迁移。新筛选任务snapshot保存`_dividend_version`，Parquet JSON列`recent_dividend`保存事件列表、三值判断及不足标记，兼容缺列的旧结果。副标题日期在读取全体结果时聚合，不改写旧文件。
+
+企业资料使用jobs.kind=`company_profile`，payload保存股票代码和明确观察日期，snapshot保存本地市场版本及`_company_version`。result.sections存区块的原始单位数据/公告日/报告期/获取时间/来源，pending_sections为持久未完成列表。最终结果在results/{job_id}/company.json原子发布；同一任务恢复保持文件内容不变，刷新创建新任务和结果，原任务仍可读取。公司静态信息为获取时快照，非历史公司资料；利润/现金流为合并年初累计报表，资产负债为期末余额；原币种主营构成不跨币种相加。
+
+单位：本地daily_basic入库已将total_mv/circ_mv从供应商万元换成元，total_share/float_share从万股换成股；company valuation直接使用该标准化值。stock_company注册资本保留万元，财务报表金额及主营构成金额保留原币种基本单位，财务指标百分数保持原值。详情仅在展示时换算注册资本到元，金额绝对值严格超过10亿用亿保留1位小数、超过100万用万取整数；每个报表金额独立携带单位，悬停显示完整金额，不改写缓存及计算值。
+
+
+## 匿名浏览事件（0008）
+
+|表|字段与用途|
+|---|---|
+|analytics_pageviews|event_id UUID主键；visitor_hash为浏览器随机UUID的SHA-256摘要；page为固定页面类别；occurred_at为服务端UTC接收时间；local_date为站点时区自然日。索引(local_date,page)、(local_date,visitor_hash)。|
+
+只保存最近90个自然日（含当天）；每日首次采集/查询时清理，不保留更早累计汇总。所有页面不重复事件UUID，重复提交不增计数；服务端不接受客户端时间。浏览器标识独立于通知账号，换设备或清除存储后重新打开会作为新访客；受限存储按当前页面生命周期识别。不上报邮箱、IP、用户代理、股票代码、完整URL、查询参数或fragment。
+
+
+## 多自选列表（0009）
+
+| 表 | 字段与约束 |
+|---|---|
+| watchlists | id UUID主键；owner_id关联notification_owners.id；name 1–80字符；codes JSON代码数组；revision正整数；created_at/updated_at UTC时间；唯一(owner_id,name)，owner_id索引。 |
+
+列表属于稳定owner主体，更换登录邮箱不改变归属。更新与删除通过owner、ID、revision共同匹配，避免多设备覆盖。0009只新增此表／索引，在显式SQLite事务中完成DDL和版本标记；中断回滚及重复初始化安全，不改账号、通知、行情版本、旧任务或研究结果。
+
+本机同结构列表位于独立版本化localStorage键 `ashare-watchlists-v1`，账号列表只缓存于页面内存。两者无导入、上传或合并流程；本机存储失败只保留编辑草稿并提示无法持久保存。账号退出／失效清理账号列表缓存，不清空本机列表。研究任务仍保存调用当时的明确代码与原有固定数据版本；修改列表不追溯改变研究。

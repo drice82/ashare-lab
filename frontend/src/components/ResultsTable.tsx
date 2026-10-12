@@ -9,22 +9,17 @@ import {
 } from "@tanstack/react-table";
 import { ArrowDownUp, Download } from "lucide-react";
 import { exportCsv, useResource } from "../api";
-import {
-  formatFactor,
-  percentFactors,
-  statusLabels,
-  factorClass,
-} from "../format";
+import { formatFactor, percentFactors, factorClass } from "../format";
 import type { Results, ScreeningRow } from "../types";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import StockInput from "./StockInput";
 import { ErrorBanner, Loading } from "./common";
+import { directionLabels, strategyName } from "../screeningSummary";
 
 const factorColumns = [
   ["close", "收盘价"],
   ["daily_return", "当日涨跌幅"],
-  ["dividend_yield_ttm", "股息率"],
   ["ma20", "MA20"],
   ["ma60", "MA60"],
   ["return_20d", "20日收益"],
@@ -32,6 +27,7 @@ const factorColumns = [
   ["volume_ratio_5d", "5日量比"],
   ["volume_ratio_20d", "20日量比"],
   ["price_distance_ma20", "MA20偏离"],
+  ["dividend_yield_ttm", "股息率"],
 ];
 export default function ResultsTable({ runId }: { runId: string }) {
   const [sorting, setSorting] = useState<SortingState>([
@@ -80,44 +76,85 @@ export default function ResultsTable({ runId }: { runId: string }) {
         ),
       },
       { id: "stock_name", accessorKey: "stock_name", header: "股票名称" },
-      {
-        id: "latest_trade_date",
-        accessorKey: "latest_trade_date",
-        header: "有效行情日",
-        cell: (info) => String(info.getValue() ?? "—"),
-      },
-      ...factorColumns.map(
-        ([id, label]): ColumnDef<ScreeningRow> => ({
-          id,
-          accessorFn: (row) => row.factor_values[id],
-          header: label,
-          cell: (info) => {
-            const value = info.row.original.factor_values[id];
-            return (
-              <span className={factorClass(id, value)}>
-                {formatFactor(id, value)}
-              </span>
-            );
-          },
-        }),
-      ),
-      {
-        id: "rule_id",
-        accessorKey: "rule_id",
-        header: "规则",
-        enableSorting: false,
-      },
-      {
-        id: "match_status",
-        accessorKey: "match_status",
-        header: "结果",
-        enableSorting: false,
-        cell: (info) => (
-          <span className="badge">{statusLabels[String(info.getValue())]}</span>
-        ),
-      },
+      ...factorColumns.map(([id, label]): ColumnDef<ScreeningRow> => ({
+        id,
+        accessorFn: (row) => row.factor_values[id],
+        header: label,
+        cell: (info) => {
+          const value = info.row.original.factor_values[id];
+          return (
+            <span className={factorClass(id, value)}>
+              {formatFactor(id, value)}
+            </span>
+          );
+        },
+      })),
+      ...(
+        [
+          ["record_date", "股权登记日"],
+          ["cash_per_10", "10股派息"],
+          ["estimated_cash_10000", "万元分红"],
+        ] as const
+      ).map(([id, label]): ColumnDef<ScreeningRow> => ({
+        id,
+        header: label,
+        accessorFn: (row) => row.recent_dividend?.events[0]?.[id],
+        cell: (info) =>
+          info.row.original.recent_dividend?.events.length ? (
+            <div className="space-y-1">
+              {info.row.original.recent_dividend.events.map((event, index) => (
+                <p key={index}>
+                  {id === "record_date"
+                    ? event.record_date
+                    : event[id] == null
+                      ? "—"
+                      : `${event[id]!.toFixed(2)} 元`}
+                </p>
+              ))}
+            </div>
+          ) : (
+            <span
+              title={
+                info.row.original.recent_dividend?.matched === null
+                  ? "分红数据不足"
+                  : "暂无近期分红安排"
+              }
+            >
+              —
+            </span>
+          ),
+      })),
+      ...(resource.data?.items.some((row) => row.signal_results?.length) ||
+      resource.data?.summary.signal_version
+        ? [
+            {
+              id: "signals",
+              header: "策略信号",
+              enableSorting: false,
+              cell: (
+                info: import("@tanstack/react-table").CellContext<
+                  ScreeningRow,
+                  unknown
+                >,
+              ) => (
+                <div className="space-y-1">
+                  {info.row.original.signal_results?.map((result) => (
+                    <p key={result.strategy_id}>
+                      {strategyName(result.strategy_id)} ·{" "}
+                      {result.direction
+                        ? directionLabels[result.direction]
+                        : result.status === "insufficient_data"
+                          ? "数据不足"
+                          : "未触发"}
+                    </p>
+                  ))}
+                </div>
+              ),
+            },
+          ]
+        : []),
     ],
-    [runId],
+    [runId, resource.data],
   );
   const table = useReactTable({
     data: resource.data?.items ?? [],
@@ -130,6 +167,11 @@ export default function ResultsTable({ runId }: { runId: string }) {
       setPage(1);
     },
   });
+  const dates = resource.data?.summary.effective_market_dates ?? [];
+  const effectiveDay =
+    dates.length > 1
+      ? `${dates[0]} 至 ${dates[dates.length - 1]}`
+      : (dates[0] ?? "—");
   async function download() {
     try {
       await exportCsv(runId);
@@ -148,9 +190,13 @@ export default function ResultsTable({ runId }: { runId: string }) {
             </span>
           </h2>
           <p className="mt-2 text-xs text-muted-foreground">
-            缺失值显示 —；数据不足{" "}
+            筛选日：{resource.data?.summary.as_of_date ?? "—"} · 有效行情日：
+            {effectiveDay}
+            {!!resource.data?.summary.missing_market_dates &&
+              "（部分股票缺失）"}
+            。缺失值显示 —；数据不足{" "}
             {resource.data?.summary.insufficient_data ?? "—"}{" "}
-            只。点击股票查看图表与触发数值。
+            只。10股派息为税前金额；万元分红为预计税前金额，万元分红按筛选日收盘价及金额比例估算，不扣税费。点击股票查看企业资料与图表。
           </p>
         </div>
         <Button variant="outline" onClick={() => void download()}>

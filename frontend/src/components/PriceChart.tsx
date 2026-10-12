@@ -7,7 +7,12 @@ import {
   createChart,
   type Time,
 } from "lightweight-charts";
-import { formatMoney, performanceColor, performanceColors } from "../format";
+import {
+  formatCompactNumber,
+  formatMoney,
+  performanceColor,
+  performanceColors,
+} from "../format";
 import type { Bar } from "../types";
 
 export default function PriceChart({ bars }: { bars: Bar[] }) {
@@ -77,7 +82,13 @@ export default function PriceChart({ bars }: { bars: Bar[] }) {
     }
     const volume = chart.addSeries(
       HistogramSeries,
-      { priceFormat: { type: "volume" }, priceLineVisible: false },
+      {
+        priceFormat: {
+          type: "custom",
+          formatter: (value: number) => formatCompactNumber(value, "股"),
+        },
+        priceLineVisible: false,
+      },
       1,
     );
     volume.setData(

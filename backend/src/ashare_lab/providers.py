@@ -1,3 +1,4 @@
+import json
 import math
 import re
 import threading
@@ -99,7 +100,14 @@ def filter_a_share_market(frame: pl.DataFrame) -> pl.DataFrame:
     return frame.filter(~known_code | a_share)
 
 
-def normalize(dataset: str, frame: pl.DataFrame, source: str, batch_id: str) -> pl.DataFrame:
+def normalize(
+    dataset: str,
+    frame: pl.DataFrame,
+    source: str,
+    batch_id: str,
+    *,
+    quarantine_ohlc: bool = False,
+) -> pl.DataFrame:
     expected = FIELDS[dataset].split(",")
     if frame.height and any(
         field not in frame.columns
@@ -142,6 +150,8 @@ def normalize(dataset: str, frame: pl.DataFrame, source: str, batch_id: str) -> 
             if field in result and not result[field]:
                 raise ProviderError("schema_error", f"{dataset} 主键日期缺失")
         if dataset == "daily":
+            if quarantine_ohlc:
+                result.update(quality_reason=None, raw_ohlc=None)
             volume = result.pop("vol")
             result["volume"] = None if volume is None else volume * 100
             result["amount"] = None if result["amount"] is None else result["amount"] * 1000
@@ -165,7 +175,32 @@ def normalize(dataset: str, frame: pl.DataFrame, source: str, batch_id: str) -> 
             if result["high"] < max(result["open"], result["close"], result["low"]) or result[
                 "low"
             ] > min(result["open"], result["close"]):
-                raise ProviderError("schema_error", "daily OHLC 不一致")
+                if not quarantine_ohlc:
+                    raise ProviderError(
+                        "schema_error",
+                        f"daily OHLC 不一致：{result['stock_code']} {result['trade_date']} "
+                        f"open={result['open']}, high={result['high']}, "
+                        f"low={result['low']}, close={result['close']}",
+                    )
+                result["raw_ohlc"] = json.dumps(
+                    {
+                        field: result[field]
+                        for field in ("open", "high", "low", "close", "pre_close")
+                    },
+                    sort_keys=True,
+                )
+                result["quality_reason"] = "ohlc_inconsistent"
+                for field in (
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "pre_close",
+                    "volume",
+                    "amount",
+                    "daily_return",
+                ):
+                    result[field] = None
         if dataset == "daily_basic":
             for field in ["turnover_rate", "dv_ratio", "dv_ttm"]:
                 if result[field] is not None:
@@ -176,7 +211,7 @@ def normalize(dataset: str, frame: pl.DataFrame, source: str, batch_id: str) -> 
         result.update(
             source=source,
             batch_id=batch_id,
-            schema_version=1,
+            schema_version=2 if dataset == "daily" and quarantine_ohlc else 1,
             fetched_at=datetime.now(UTC).isoformat(),
         )
         cleaned.append(result)
@@ -188,6 +223,8 @@ def normalize(dataset: str, frame: pl.DataFrame, source: str, batch_id: str) -> 
         schema[name] = pl.String if field in STRING_FIELDS else pl.Float64
     if dataset == "daily":
         schema.update(volume=pl.Float64, daily_return=pl.Float64)
+        if quarantine_ohlc:
+            schema.update(quality_reason=pl.String, raw_ohlc=pl.String)
     schema.update(
         source=pl.String, batch_id=pl.String, schema_version=pl.Int64, fetched_at=pl.String
     )
@@ -224,7 +261,10 @@ class TushareProvider:
         token = self.settings.tushare_token.get_secret_value()
         if not token:
             raise ProviderError("token_missing", "未配置 TUSHARE_TOKEN，不能同步真实数据")
-        if dataset not in FIELDS:
+        from ashare_lab.company import COMPANY_FIELDS
+
+        fields = {**FIELDS, **COMPANY_FIELDS}
+        if dataset not in fields:
             raise ProviderError("unsupported_dataset", "不支持的数据集")
         for attempt in range(4):
             with self.rate_lock:
@@ -239,7 +279,7 @@ class TushareProvider:
                         "api_name": dataset,
                         "token": token,
                         "params": params,
-                        "fields": FIELDS[dataset],
+                        "fields": fields[dataset],
                     },
                 )
                 if response.status_code in {401, 403}:

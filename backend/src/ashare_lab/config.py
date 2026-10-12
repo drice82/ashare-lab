@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     notification_auto_send: bool = False
     notification_cookie_secure: bool = True
     notification_public_url: str = "http://localhost:5173"
+    public_url_aliases: str = ""
     notification_trusted_proxies: str = ""
     notification_session_days: int = 180
     notification_subscription_limit: int = 20
@@ -54,16 +55,19 @@ class Settings(BaseSettings):
         from ipaddress import ip_network
         from urllib.parse import urlsplit
 
-        public_url = urlsplit(self.notification_public_url)
-        if (
-            public_url.scheme not in {"http", "https"}
-            or not public_url.netloc
-            or public_url.path not in {"", "/"}
-            or public_url.query
-            or public_url.fragment
-            or public_url.username
-        ):
-            raise ValueError("NOTIFICATION_PUBLIC_URL 必须是网站origin（协议、域名和端口）")
+        for origin in self.public_origins():
+            public_url = urlsplit(origin)
+            if (
+                public_url.scheme not in {"http", "https"}
+                or not public_url.netloc
+                or public_url.path not in {"", "/"}
+                or public_url.query
+                or public_url.fragment
+                or public_url.username
+            ):
+                raise ValueError(
+                    "NOTIFICATION_PUBLIC_URL / PUBLIC_URL_ALIASES 必须是网站origin（协议、域名和端口）"
+                )
 
         for network in self.notification_trusted_proxies.split(","):
             if network.strip():
@@ -78,3 +82,10 @@ class Settings(BaseSettings):
         if not 1 <= self.smtp_port <= 65535:
             raise ValueError("SMTP_PORT 无效")
         return self
+
+    def public_origins(self) -> set[str]:
+        return {self.notification_public_url.rstrip("/")} | {
+            origin.strip().rstrip("/")
+            for origin in self.public_url_aliases.split(",")
+            if origin.strip()
+        }

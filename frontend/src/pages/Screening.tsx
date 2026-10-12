@@ -6,7 +6,11 @@ import { Filter, Save } from "lucide-react";
 import { api, useResource } from "../api";
 import { activeJob, statusLabels } from "../format";
 import { ConditionEditor } from "../components/ConditionEditor";
+import StrategySelection from "../components/StrategySelection";
+import { type StrategyConfig } from "../comparison";
+import ScreeningDescription from "../components/ScreeningDescription";
 import StockInput from "../components/StockInput";
+import WatchlistPicker from "../components/WatchlistPicker";
 import ResultsTable from "../components/ResultsTable";
 import { ErrorBanner, Loading, PageTitle } from "../components/common";
 import { Button } from "../components/ui/button";
@@ -14,7 +18,7 @@ import { Card } from "../components/ui/card";
 import type {
   Factor,
   Group,
-  Job,
+  ScreeningJob,
   MarketStatus,
   Parameters,
   Preset,
@@ -45,16 +49,31 @@ export default function Screening() {
   const [historyRevision, setHistoryRevision] = useState(0);
   const [query, setQuery] = useSearchParams();
   const runId = query.get("run");
-  const task = useResource<Job>(
+  const task = useResource<ScreeningJob>(
     runId ? `/screening/runs/${runId}` : null,
     2000,
   );
   const [ruleId, setRuleId] = useState("A");
+  const [mode, setMode] = useState<
+    "rule" | "signal" | "rule_signal" | "dividend"
+  >("rule");
+  const [signalParameters, setSignalParameters] = useState<Parameters>({
+    exclude_st: false,
+    exclude_suspended: true,
+  });
+  const [strategies, setStrategies] = useState<StrategyConfig[]>([
+    { id: "ma_cross", short_window: 20, long_window: 60 },
+  ]);
+  const [recentEnabled, setRecentEnabled] = useState(false);
+  const [recentDays, setRecentDays] = useState(30);
+  const recentInput = useRef<HTMLInputElement>(null);
+  const [direction, setDirection] = useState<"buy" | "sell" | "either">("buy");
   const [dividendDraft, setDividendDraft] = useState<string | null>(null);
   const dividendInput = useRef<HTMLInputElement>(null);
   const [parameters, setParameters] = useState<Parameters>({});
   const [day, setDay] = useState("");
   const [universe, setUniverse] = useState<"all" | "custom">("all");
+  const [fromWatchlist, setFromWatchlist] = useState(false);
   const [codes, setCodes] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -71,10 +90,23 @@ export default function Screening() {
   function apply(definition: ScreeningDefinition) {
     dividendInput.current?.setCustomValidity("");
     setDividendDraft(null);
-    setRuleId(definition.rule_id);
-    setParameters(definition.parameters);
+    const nextMode = definition.mode ?? "rule";
+    setMode(nextMode);
+    if (definition.rule_id) setRuleId(definition.rule_id);
+    setRecentEnabled(Boolean(definition.dividend_filter));
+    setRecentDays(definition.dividend_filter?.days ?? 30);
+    if (nextMode === "signal" || nextMode === "dividend")
+      setSignalParameters(definition.parameters);
+    else setParameters(definition.parameters);
+    setStrategies(
+      definition.signal_filter?.strategies ?? [
+        { id: "ma_cross", short_window: 20, long_window: 60 },
+      ],
+    );
+    setDirection(definition.signal_filter?.direction ?? "buy");
     setDay(definition.as_of_date);
     setUniverse(definition.universe.type);
+    setFromWatchlist(false);
     setCodes(definition.universe.codes.join(", "));
   }
   useEffect(() => {
@@ -83,7 +115,8 @@ export default function Screening() {
       apply(task.data.payload);
     }
   }, [task.data]);
-  const completedNavigation = useRef("");
+  // An explicit historical tab must survive the first completed-job response.
+  const completedNavigation = useRef(query.has("tab") ? (runId ?? "") : "");
   useEffect(() => {
     if (
       task.data?.id === runId &&
@@ -104,7 +137,8 @@ export default function Screening() {
   function definition(): ScreeningDefinition {
     return {
       as_of_date: day,
-      rule_id: ruleId,
+      mode,
+      rule_id: mode === "signal" || mode === "dividend" ? null : ruleId,
       universe: {
         type: universe,
         codes:
@@ -115,17 +149,27 @@ export default function Screening() {
                 .map((c) => c.toUpperCase())
             : [],
       },
-      parameters,
+      parameters:
+        mode === "signal" || mode === "dividend"
+          ? signalParameters
+          : parameters,
+      signal_filter:
+        mode === "rule" || mode === "dividend"
+          ? null
+          : { strategies, direction },
+      dividend_filter:
+        mode === "dividend" || recentEnabled ? { days: recentDays } : null,
     };
   }
   async function execute() {
+    if (recentInput.current && !recentInput.current.reportValidity()) return;
     if (dividendInput.current && !dividendInput.current.reportValidity())
       return;
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      const job = await api<Job>("/screening/run", {
+      const job = await api<ScreeningJob>("/screening/run", {
         method: "POST",
         body: JSON.stringify(definition()),
       });
@@ -138,6 +182,7 @@ export default function Screening() {
     }
   }
   async function save() {
+    if (recentInput.current && !recentInput.current.reportValidity()) return;
     if (dividendInput.current && !dividendInput.current.reportValidity())
       return;
     setError("");
@@ -168,6 +213,14 @@ export default function Screening() {
         title="股票筛选"
         subtitle="选择历史交易日，组合条件。新筛选排除已退市证券；历史结果仅涵盖存续证券，存在幸存者偏差。"
       />
+      {(task.data?.result?.fixture_mode ?? market.data?.fixture_mode) && (
+        <p
+          role="status"
+          className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+        >
+          fixture 模式：当前使用合成测试数据。
+        </p>
+      )}
       <ErrorBanner
         message={
           error || rules.error || market.error || presets.error || task.error
@@ -205,7 +258,15 @@ export default function Screening() {
         result={
           <>
             {runId && task.data?.status === "succeeded" && (
-              <ResultsTable key={runId} runId={runId} />
+              <>
+                <div className="mt-4 rounded-lg border border-border p-4">
+                  <ScreeningDescription
+                    definition={task.data.payload}
+                    ruleVersion={task.data.snapshot?._rule_version}
+                  />
+                </div>
+                <ResultsTable key={runId} runId={runId} />
+              </>
             )}
             {!runId && <p>请先提交任务或查看历史任务。</p>}
           </>
@@ -243,27 +304,42 @@ export default function Screening() {
             </div>
             <div className="grid gap-4 md:grid-cols-3">
               <label>
-                筛选规则
+                筛选方式
                 <select
-                  aria-label="筛选规则"
-                  value={ruleId}
-                  onChange={(e) => {
-                    const id = e.target.value;
-                    dividendInput.current?.setCustomValidity("");
-                    setDividendDraft(null);
-                    setRuleId(id);
-                    setParameters(
-                      rules.data!.rules.find((r) => r.id === id)!.defaults,
-                    );
-                  }}
+                  aria-label="筛选方式"
+                  value={mode}
+                  onChange={(e) => setMode(e.target.value as typeof mode)}
                 >
-                  {rules.data.rules.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.id} · {r.name}
-                    </option>
-                  ))}
+                  <option value="rule">规则筛选</option>
+                  <option value="signal">策略信号筛选</option>
+                  <option value="rule_signal">规则与信号同时满足</option>
+                  <option value="dividend">近期分红筛选</option>
                 </select>
               </label>
+              {mode !== "signal" && mode !== "dividend" && (
+                <label>
+                  筛选规则
+                  <select
+                    aria-label="筛选规则"
+                    value={ruleId}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      dividendInput.current?.setCustomValidity("");
+                      setDividendDraft(null);
+                      setRuleId(id);
+                      setParameters(
+                        rules.data!.rules.find((r) => r.id === id)!.defaults,
+                      );
+                    }}
+                  >
+                    {rules.data.rules.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.id} · {r.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <label>
                 筛选日期
                 <input
@@ -278,31 +354,49 @@ export default function Screening() {
                 股票池
                 <select
                   aria-label="股票池"
-                  value={universe}
-                  onChange={(e) =>
-                    setUniverse(e.target.value as "all" | "custom")
-                  }
+                  value={fromWatchlist ? "watchlist" : universe}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setUniverse(value === "all" ? "all" : "custom");
+                    setFromWatchlist(value === "watchlist");
+                    if (value === "watchlist" || value === "all") setCodes("");
+                  }}
                 >
                   <option value="all">全沪深 A 股</option>
                   <option value="custom">自选股票池</option>
+                  <option value="watchlist">从自选列表筛选</option>
                 </select>
               </label>
             </div>
-            {universe === "custom" && (
-              <label className="mt-4">
-                自选股票
-                <StockInput
-                  label="自选股票代码"
-                  multiple
-                  value={codes}
-                  onChange={setCodes}
-                  asOfDate={day || undefined}
+            {fromWatchlist && (
+              <div className="mt-4">
+                <WatchlistPicker
+                  onApply={(value) => setCodes(value.join(", "))}
                 />
-              </label>
+              </div>
             )}
+            <div className="mt-4">
+              <p className="mb-2 text-sm font-medium">股票名称或代码</p>
+              <StockInput
+                label={universe === "all" ? "股票名称或代码" : "自选股票代码"}
+                multiple
+                value={universe === "custom" ? codes : ""}
+                onChange={(value) => {
+                  setCodes(value);
+                  setUniverse("custom");
+                  setFromWatchlist(false);
+                }}
+                asOfDate={day || undefined}
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                选择股票后仅在所选股票中筛选，仍需满足下方条件；筛选全市场请将股票池切回全沪深 A 股。
+              </p>
+            </div>
             <div className="my-5 border-t border-border" />
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {Object.entries(parameters)
+              {Object.entries(
+                mode === "signal" || mode === "dividend" ? {} : parameters,
+              )
                 .filter(([, v]) => typeof v === "number")
                 .map(([key, value]) => {
                   const [label, unit] = parameterLabels[key] ?? [key, ""];
@@ -383,12 +477,74 @@ export default function Screening() {
                   );
                 })}
             </div>
-            {ruleId === "F" && parameters.group && (
-              <ConditionEditor
-                group={parameters.group as Group}
-                factors={rules.data.factors}
-                onChange={(group) => setParameters((p) => ({ ...p, group }))}
-              />
+            {mode !== "signal" &&
+              mode !== "dividend" &&
+              ruleId === "F" &&
+              parameters.group && (
+                <ConditionEditor
+                  group={parameters.group as Group}
+                  factors={rules.data.factors}
+                  onChange={(group) => setParameters((p) => ({ ...p, group }))}
+                />
+              )}
+            {(mode === "signal" || mode === "rule_signal") && (
+              <>
+                <label className="mt-4 max-w-xs">
+                  信号方向
+                  <select
+                    aria-label="信号方向"
+                    value={direction}
+                    onChange={(e) =>
+                      setDirection(e.target.value as typeof direction)
+                    }
+                  >
+                    <option value="buy">仅买入</option>
+                    <option value="sell">仅卖出</option>
+                    <option value="either">买卖任一</option>
+                  </select>
+                </label>
+                <StrategySelection
+                  purpose="screening"
+                  selected={strategies}
+                  onChange={setStrategies}
+                />
+              </>
+            )}
+            <div className="mt-5 flex flex-wrap items-end gap-5">
+              {mode !== "dividend" && (
+                <label className="!flex !items-center !gap-2">
+                  <input
+                    type="checkbox"
+                    aria-label="近期分红"
+                    checked={recentEnabled}
+                    onChange={(e) => setRecentEnabled(e.target.checked)}
+                  />
+                  近期分红（同时满足）
+                </label>
+              )}
+              {(mode === "dividend" || recentEnabled) && (
+                <label>
+                  未来登记窗口（自然日）
+                  <input
+                    ref={recentInput}
+                    aria-label="登记窗口天数"
+                    type="number"
+                    required
+                    min={1}
+                    max={365}
+                    step={1}
+                    className="!w-32"
+                    value={Number.isNaN(recentDays) ? "" : recentDays}
+                    onChange={(e) => setRecentDays(e.target.valueAsNumber)}
+                  />
+                </label>
+              )}
+            </div>
+            {(mode === "dividend" || recentEnabled) && (
+              <p className="mt-3 text-xs text-muted-foreground">
+                筛选日后 {Number.isFinite(recentDays) ? recentDays : "—"}{" "}
+                天内登记、筛选日前已公开实施公告的现金分红安排。预计金额为税前参考值。
+              </p>
             )}
             <div className="mt-5 flex flex-wrap gap-5">
               {(["exclude_st", "exclude_suspended"] as const).map((key) => (
@@ -396,9 +552,18 @@ export default function Screening() {
                   <input
                     aria-label={key === "exclude_st" ? "剔除ST" : "剔除停牌"}
                     type="checkbox"
-                    checked={parameters[key] === true}
+                    checked={
+                      (mode === "signal" || mode === "dividend"
+                        ? signalParameters
+                        : parameters)[key] === true
+                    }
                     onChange={(e) =>
-                      setParameters((p) => ({ ...p, [key]: e.target.checked }))
+                      (mode === "signal" || mode === "dividend"
+                        ? setSignalParameters
+                        : setParameters)((p) => ({
+                        ...p,
+                        [key]: e.target.checked,
+                      }))
                     }
                   />
                   {key === "exclude_st"
@@ -412,6 +577,8 @@ export default function Screening() {
                 disabled={
                   busy ||
                   !day ||
+                  ((mode === "signal" || mode === "rule_signal") &&
+                    !strategies.length) ||
                   Boolean(task.data && activeJob(task.data.status))
                 }
                 onClick={() => void execute()}
@@ -428,7 +595,12 @@ export default function Screening() {
               />
               <Button
                 variant="outline"
-                disabled={!presetName.trim() || !day}
+                disabled={
+                  !presetName.trim() ||
+                  !day ||
+                  ((mode === "signal" || mode === "rule_signal") &&
+                    !strategies.length)
+                }
                 onClick={() => void save()}
               >
                 <Save size={15} />

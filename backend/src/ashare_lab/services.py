@@ -15,6 +15,7 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.sqlite import insert
 
 from ashare_lab.backtest_service import BacktestService
+from ashare_lab.company import CompanyService
 from ashare_lab.config import Settings
 from ashare_lab.db import (
     Database,
@@ -28,6 +29,7 @@ from ashare_lab.db import (
     settings_table,
 )
 from ashare_lab.dca_service import DcaService
+from ashare_lab.dividends import DIVIDEND_VERSION
 from ashare_lab.factors import (
     BOOLEAN_FACTORS,
     FACTOR_VERSION,
@@ -37,7 +39,7 @@ from ashare_lab.factors import (
 )
 from ashare_lab.instrument_search import search_rank
 from ashare_lab.portfolio_service import PortfolioBacktestService
-from ashare_lab.rules import RULE_VERSION, RuleRegistry
+from ashare_lab.rules import RULE_VERSION, Common, RuleRegistry
 from ashare_lab.scheduler import (
     SYNC_POLICY,
     DailyDividendScheduler,
@@ -47,6 +49,7 @@ from ashare_lab.scheduler import (
     MonthlyNameScheduler,
 )
 from ashare_lab.schemas import PresetRequest, ScreeningRequest, SyncRequest, Universe
+from ashare_lab.signal_screening import SIGNAL_SCREENING_VERSION, strategy_version
 from ashare_lab.warehouse import MarketRepository
 
 
@@ -71,6 +74,7 @@ class ApplicationService:
         self.dca = DcaService(self.db, self.repository)
         self.backtest = BacktestService(self.db, self.repository)
         self.portfolio = PortfolioBacktestService(self.db, self.repository)
+        self.company = CompanyService(settings, self.db, self.repository)
         self._instrument_cache: OrderedDict[tuple[str, str], tuple[dict[str, Any], ...]] = (
             OrderedDict()
         )
@@ -98,7 +102,11 @@ class ApplicationService:
 
     def validate_rule(self, request: ScreeningRequest) -> ScreeningRequest:
         try:
-            parameters = self.registry.validate(request.rule_id, request.parameters)
+            if request.mode in {"signal", "dividend"}:
+                parameters = Common.model_validate(request.parameters)
+            else:
+                assert request.rule_id is not None
+                parameters = self.registry.validate(request.rule_id, request.parameters)
         except ValidationError as exc:
             raise ServiceError(
                 422,
@@ -118,6 +126,17 @@ class ApplicationService:
             raise ServiceError(422, "not_trading_day", "指定日期不是已同步的交易日")
         if not self.repository.covered_date("daily", day, snapshot):
             raise ServiceError(409, "day_not_synced", "指定交易日未完成行情同步")
+        signal_versions = {}
+        if request.signal_filter:
+            if not {"adj_factor", "suspend_d"} <= snapshot.keys():
+                raise ServiceError(409, "data_not_ready", "策略信号需要复权因子和停复牌数据版本")
+            signal_versions = {
+                "_signal_version": SIGNAL_SCREENING_VERSION,
+                **{
+                    f"_strategy_version_{config.id}": strategy_version(config)
+                    for config in request.signal_filter.strategies
+                },
+            }
         return self.db.enqueue(
             "screening",
             request.model_dump(mode="json"),
@@ -126,6 +145,8 @@ class ApplicationService:
                 "_rule_version": RULE_VERSION,
                 "_factor_version": FACTOR_VERSION,
                 "_universe_policy": "survivors_v1",
+                "_dividend_version": DIVIDEND_VERSION,
+                **signal_versions,
             },
         )
 
@@ -447,6 +468,9 @@ class ApplicationService:
             "stock_code": (),
             "stock_name": (),
             "latest_trade_date": (),
+            "record_date": (),
+            "cash_per_10": (),
+            "estimated_cash_10000": (),
         }:
             raise ServiceError(422, "invalid_sort", "不支持该排序字段")
         rows = pl.read_parquet(self.settings.data_dir / job["result"]["path"]).to_dicts()
@@ -456,8 +480,17 @@ class ApplicationService:
                 "data_quality_flags",
                 "condition_results",
                 "matched_factors",
+                *(["signal_results"] if "signal_results" in row else []),
+                *(["recent_dividend"] if "recent_dividend" in row else []),
             ]:
                 row[key] = json.loads(row[key])
+        dates = sorted({r["latest_trade_date"] for r in rows if r.get("latest_trade_date")})
+        summary = {
+            **job["result"],
+            "as_of_date": job["payload"]["as_of_date"],
+            "effective_market_dates": dates,
+            "missing_market_dates": sum(not r.get("latest_trade_date") for r in rows),
+        }
         rows = [
             r
             for r in rows
@@ -478,6 +511,9 @@ class ApplicationService:
             ]
 
         def sort_value(row: dict[str, Any]) -> Any:
+            if sort_by in {"record_date", "cash_per_10", "estimated_cash_10000"}:
+                events = (row.get("recent_dividend") or {}).get("events", [])
+                return events[0].get(sort_by) if events else None
             return row.get(sort_by) if sort_by in row else row["factor_values"].get(sort_by)
 
         valid = sorted(
@@ -492,7 +528,7 @@ class ApplicationService:
             "total": len(ordered),
             "page": page,
             "page_size": page_size,
-            "summary": job["result"],
+            "summary": summary,
             "data_versions": job["snapshot"],
         }
 
@@ -510,7 +546,14 @@ class ApplicationService:
                 else f"{name} ({NUMERIC_FACTORS[name][1]})"
                 for name in factors
             ]
-            + ["data_versions", "data_quality_flags", "universe_policy"]
+            + [
+                "data_versions",
+                "data_quality_flags",
+                "universe_policy",
+                "signal_results",
+                "recent_dividend (税前;金额比例估算)",
+                "fixture_mode",
+            ]
         )
 
         def safe(value: Any) -> Any:
@@ -521,6 +564,11 @@ class ApplicationService:
             return value
 
         snapshot = self.job(job_id)["snapshot"]
+        fixture_mode = any(
+            self.repository.version(version, resolve_coverage=False)["source"] == "fixture"
+            for key, version in snapshot.items()
+            if not key.startswith("_")
+        )
         for row in rows:
             writer.writerow(
                 [safe(row.get(k)) for k in columns]
@@ -531,6 +579,9 @@ class ApplicationService:
                     "排除数据版本中已退市证券"
                     if snapshot.get("_universe_policy") == "survivors_v1"
                     else "历史上市股票池",
+                    json.dumps(row.get("signal_results", []), ensure_ascii=False, allow_nan=False),
+                    json.dumps(row.get("recent_dividend"), ensure_ascii=False, allow_nan=False),
+                    fixture_mode,
                 ]
             )
         return "\ufeff" + stream.getvalue()

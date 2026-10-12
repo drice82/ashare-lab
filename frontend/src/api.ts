@@ -35,8 +35,14 @@ export async function api<T>(
       detail?: unknown;
       code?: string;
     };
-    if (response.status === 401 && !path.startsWith("/notifications"))
-      window.dispatchEvent(new Event("ashare-auth-required"));
+    if (response.status === 401) {
+      if (
+        !path.startsWith("/notifications") &&
+        path !== "/watchlists" &&
+        !path.startsWith("/watchlists/")
+      )
+        window.dispatchEvent(new Event("ashare-auth-required"));
+    }
     if (response.status === 403 && body.code === "data_management_locked")
       window.dispatchEvent(new Event("ashare-data-locked"));
     throw new ApiError(

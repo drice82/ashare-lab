@@ -25,7 +25,9 @@ function HistoryControls() {
 }
 
 function openKnowledge(path = "/knowledge") {
-  const fetch = vi.fn(() => Promise.reject(new Error("知识库不应请求 API")));
+  const fetch = vi.fn<typeof globalThis.fetch>(() =>
+    Promise.reject(new Error("离线环境")),
+  );
   vi.stubGlobal("fetch", fetch);
   const scroll = vi.fn();
   const original = HTMLElement.prototype.scrollIntoView;
@@ -45,7 +47,7 @@ function openKnowledge(path = "/knowledge") {
   };
 }
 
-it("知识库路由无需 API 或密钥，六策略及手核示例完整可读", async () => {
+it("知识库无需研究 API 或密钥，上报失败时六策略及手核示例完整可读", async () => {
   const { fetch, restore } = openKnowledge();
   try {
     await screen.findByRole("heading", { level: 1, name: "知识库" });
@@ -74,7 +76,15 @@ it("知识库路由无需 API 或密钥，六策略及手核示例完整可读",
     expect(
       screen.queryByRole("heading", { name: "访问密钥" }),
     ).not.toBeInTheDocument();
-    expect(fetch).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/v1/notifications/session",
+      expect.anything(),
+    );
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/v1/analytics/pageviews",
+      expect.objectContaining({ credentials: "omit" }),
+    );
   } finally {
     restore();
   }
@@ -119,7 +129,15 @@ it("未知章节仍显示知识库，外部资料均标明语言并安全打开�
       expect(link).toHaveAttribute("rel", "noopener noreferrer");
       expect(link).toHaveAccessibleName(/新窗口/);
     }
-    expect(fetch).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/v1/notifications/session",
+      expect.anything(),
+    );
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/v1/analytics/pageviews",
+      expect.objectContaining({ credentials: "omit" }),
+    );
   } finally {
     restore();
   }

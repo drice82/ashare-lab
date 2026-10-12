@@ -56,6 +56,26 @@ localhost研究接口默认无全站认证，管理接口仍要求独立密码�
 
 状态接口的URL与字段保持兼容，统计按不可变版本读取摘要，任务状态仍实时读取。研究任务第三次运行中断后为failed，error说明“任务反复中断”，不擅自判定OOM；用户可重新提交研究任务，同步恢复接口及检查点语义不变。筛选计算批次更新progress，结果发布成功后才达到1。
 
+## 策略信号筛选
+
+股票筛选新增兼容字段：`mode=rule|signal|rule_signal`（默认rule）、`signal_filter={strategies:[StrategyConfig],direction:buy|sell|either}`。独立信号要求`rule_id=null`或省略，parameters仅接受ST/停牌排除设置；其他模式要求A–F，rule模式不能带signal_filter。信号模式要求1–5种不同技术策略，拒绝buy_hold和重复策略。`GET /screening/rules`新增strategies（名称、版本、默认值、参数范围）；原rules/factors不变。日期、股票池与原筛选一致，服务在提交时固定已发布版本。
+
+```json
+{
+  "as_of_date": "2026-10-09",
+  "mode": "signal",
+  "rule_id": null,
+  "universe": {"type": "custom", "codes": ["000001.SZ"]},
+  "parameters": {"exclude_st": false, "exclude_suspended": true},
+  "signal_filter": {
+    "direction": "buy",
+    "strategies": [{"id": "ma_cross", "short_window": 20, "long_window": 60}]
+  }
+}
+```
+
+任务仍为kind=screening，提交、查询、取消、结果、CSV和方案入口不变。信号结果行新增signal_results，每项含strategy_id、trade_date、parameters、status、direction、matched、reason、evidence、data_versions、strategy_version；旧规则结果允许缺少此字段。任务汇总新增fixture_mode，信号任务另含signal_version；CSV新增signal_results、fixture_mode。缺依赖版本返回409；非法模式/方向/策略/参数返回422；窗口覆盖不足在结果中保留未知。
+
 ## 历史任务删除
 
 四类任务详情路径支持 DELETE：`/api/v1/screening/runs/{job_id}`、`/api/v1/backtest/runs/{job_id}`、`/api/v1/dca/runs/{job_id}`、`/api/v1/data/sync/{job_id}`。成功返回 HTTP 200 和 `{"deleted":true,"id":"任务ID"}`。不存在或类型不匹配返回 404；queued、running、cancel_requested 返回 409（task_active），应先取消并等待结束。succeeded、failed、cancelled、partial 均可永久删除，包含旧任务和自动同步任务。
@@ -136,3 +156,48 @@ Webhook固定POST JSON `{title,body,group:"ashare-lab"}`，普通接收端HTTP 2
 渠道及订阅测试共享账号额度：滚动一小时前5次连续发送，之后间隔至少60秒，每小时最多20次；多渠道一次测试计一次，实际发送失败计次，校验失败和限流拒绝不计次，429消息含等待秒数。Webhook重新启用时的测试也计额度，现有IP保护保留。
 
 `GET /notifications/deliveries` 合并正式信号与独立订阅测试记录，新增 `is_test` 布尔标识。测试记录的created_at为测试时间，trade_date为“示例日期”，check_id/revision/channel_revision/next_attempt为空，outcome包含股票、策略快照、明确示例依据和空数据版本。status新增unknown（发送状态未知，无自动重试）；正式记录原字段保持兼容。统一按created_at降序和id排序，渠道筛选、total、limit、offset均覆盖合并结果。Bark查询参数保留兼容，前端仅提供全部、邮件和Webhook选项。
+
+## 近期分红与最新企业资料
+
+`ScreeningRequest.mode`增加`dividend`（独立近期分红）；规则、信号及叠加模式均可附加`dividend_filter: {days: 30}`。窗口允许1–365个自然日；独立模式不得指定规则或信号，参数仅包含既有ST/停牌排除设置。新任务固定`_dividend_version=1.0.0`；旧任务缺少此标记且未启用分红条件时不增加或重算分红结果。
+
+结果行新增`recent_dividend: {matched, days, flags, events}`，事件包含分红年度、公告/实施公告/登记/除息/派息日期、`cash_per_share`、`cash_per_10`及`estimated_cash_10000`。金额为税前元；万元估算按筛选日原始收盘价计算，允许小数股数，未扣税费。CSV增加事件JSON列。`record_date`、`cash_per_10`、`estimated_cash_10000`支持排序，多笔按最近登记事件排序，未知置末尾。结果summary增加`as_of_date`、全体任务结果的`effective_market_dates`及`missing_market_dates`，与当前页和筛选状态无关。
+
+| 接口 | 行为 |
+| --- | --- |
+| `GET /api/v1/instruments/{code}/company` | 读取最新企业缓存及活动任务状态，无缓存返回空区块及stale=true，不调用供应商 |
+| `POST /api/v1/instruments/{code}/company/refresh?force=false` | 返回202及企业资料任务；活动任务去重，24小时成功缓存复用；force=true刷新全部区块，失败后5分钟冷却仍生效 |
+| `GET /api/v1/instruments/{code}/company/jobs/{job_id}` | 仅返回该股票的company_profile任务；代码或任务不匹配返回404 |
+
+企业响应包含`stock_code/as_of_date/data_version/sections/valuation/fixture_mode/stale/job`。sections为company、indicators、products、regions、income、balance、cashflow；每区块包含`status/items/source/fetched_at`及可选message。状态ready/empty表示成功或无数据，其他状态说明权限/临时错误/截断/结构异常。企业资料为最新获取快照，与历史研究任务日期和行情版本分别展示；估值使用企业任务固定的本地daily_basic版本，并显式携带行情日期和来源。财务百分数字段保持Tushare原始百分数，报表金额为元，注册资本为万元；valuation中的总市值/流通市值为已标准化的元，不得再乘10000。主营构成保留curr_type币种，金额不进行汇率换算。
+
+
+## 后台浏览统计
+
+- `POST /api/v1/analytics/pageviews`：请求`{event_id: UUID4, visitor_id: UUID4, page}`，page仅允许screening/dca/backtest/portfolio/knowledge/notifications/stock_detail；拒绝额外字段及客户端时间。此准确路径和POST方法豁免共享密钥，不需后台密码，必须提供同源Origin（沿用NOTIFICATION_PUBLIC_URL或请求base_url），成功及重复事件均返回204。其他analytics路径和方法不豁免。服务端只保存访客标识摘要和页面类别；无业务凭据/完整访问地址上报。
+- `GET /api/v1/data/analytics?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`：沿用API访问密钥及X-Data-Management-Password，响应Cache-Control:no-store。日期含首尾，只允许最近90个自然日且不超过今天；默认截至今天最近30天，指定结束日期时默认向前29天，非法范围422。
+- 返回`start_date/end_date/today/earliest_date/timezone/retention_days`，`totals:{pageviews,visitors}`，补零且日期升序的`daily:[{date,pageviews,visitors}]`，浏览次数降序（并列按page）的`pages:[{page,name,pageviews,visitors,share}]`。share为0–1的浏览次数占比；区间访客单独去重，不能将每日或页面访客数相加代替。无数据时totals为0，daily补零，pages为空。
+- 统计从功能上线开始积累，后台/跳转/不存在页面排除；通知退订页归入信号通知，股票详情归为同一类别。刷新、页面切换、不同股票详情及浏览器前进后退计新浏览，页签/分页/参数变化不计新浏览。
+- 前端文案为“后台管理”，原环境变量/请求头/错误码兼容保留，管理密码仍从环境读取且仅在前端页面内存使用。
+
+
+2026-10-11主域名更新：NOTIFICATION_PUBLIC_URL=https://niu.kaistar.net，用于通知退订等链接及同源验证；PUBLIC_URL_ALIASES=https://niuniu.kaistar.net显式允许原域名作为兼容入口。别名为逗号分隔的纯HTTP(S) origin，禁止路径、查询、fragment或用户名；浏览上报和通知写请求共同检查主域名、别名或请求base_url，未知来源仍拒绝。浏览器Cookie保持Secure/HttpOnly/Lax及原path，两个域名的浏览器存储和登录Cookie各自独立，邮箱账号及后台密码共用原数据库。
+
+
+## 多自选列表（0009）
+
+自选接口复用邮箱账号登录，准确路径／方法不要求共享访问密钥；所有读写必须有有效用户会话，写入须提供可信同源 Origin。响应为 no-store，写入沿用60次／分钟限制，PUT列表不计入通知发送额度。
+
+| 方法与路径 | 输入／返回 |
+|---|---|
+| GET /api/v1/watchlists | 返回当前账号列表数组，按创建时间、ID排序 |
+| POST /api/v1/watchlists | `{name,codes}`，201返回创建的列表 |
+| GET /api/v1/watchlists/{id} | 返回单列表 |
+| PUT /api/v1/watchlists/{id} | `{name,codes,revision}`，返回修订号递增后的列表 |
+| DELETE /api/v1/watchlists/{id}?revision=整数 | 返回 `{status:"deleted"}` |
+
+列表返回 `id/name/codes/revision/created_at/updated_at`，不返回owner_id。名称去除首尾空白，1–80字符，同账号名称按大小写敏感方式唯一；codes允许为空、最多6000项，限定沪深A股并按首次出现顺序去重。修订号从1开始。未登录401，其他账号或不存在列表404，同名或过期修订409，输入无效422；删除后重复读取／删除为404。
+
+新会话 Cookie 为 `ashare_user_session`，Path=/api/v1，继续HttpOnly、Lax及部署环境的Secure设置。通知登录／会话接口路径保持兼容；GET /notifications/session验证旧 `ashare_notification_session` 后迁移Cookie，不延长原有效期，并清除原Path=/api/v1/notifications的Cookie。新Cookie存在时优先使用，失效时不回退旧身份；登录／退出清理旧Cookie，退出仅撤销当前设备会话，邮箱更换继续撤销旧会话。
+
+本机列表只保存在浏览器 `ashare-watchlists-v1`，不调用账号写接口、不自动导入或合并。研究调用复制列表代码，筛选仍提交 `universe:{type:"custom",codes:[...]}`，组合仍提交明确members；不新增可变列表ID引用，旧请求、预设、任务和结果兼容。匿名用户保留手动选股和本机多个列表；登录用户也可独立调用本机列表。

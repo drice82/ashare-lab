@@ -24,3 +24,23 @@ daily_return=close/pre_close-1（除权昨收）；return_Nd=P*D/P*(D-N)-1，需
 F：条件树支持 AND/OR、gt/gte/lt/lte/eq、enabled。白名单数值/布尔因子，最大深度4、最多64个节点（含组）；禁止代码执行；空树/全部禁用返回422。三值逻辑：AND 有 false 即 false，否则有 unknown 即 unknown；OR 有 true 即 true，否则有 unknown 即 unknown。缺失关键值不能默认为命中。
 
 输出 match_status=matched/not_matched/insufficient_data，factor_values、matched_factors、condition_results、data_quality_flags。比例在 API 为小数，网页显示 %；missing 为 null/—。每个任务固定参数、版本、股票池和结果排序。
+
+## 当天策略信号筛选（1.0.0）
+
+筛选方式为 rule（原 A–F）、signal（独立信号）、rule_signal（规则与信号同时满足）。旧请求缺少 mode 时仍为 rule。信号仅判断指定交易日收盘，不筛选“已有多头/空头趋势”，不模拟成交，也不要求卖出信号对应实际持仓。
+
+支持双均线、MACD、RSI、唐奇安、布林带五种技术策略，每种最多一组参数，任一策略触发目标方向即满足信号条件；不支持买入持有。参数、预热长度、递归种子、复权锚点及交叉容差复用现有共享信号算法。添加其他策略不改变原策略窗口与结果。direction 为 buy、sell、either，默认 buy。
+
+独立信号 parameters 仅允许 exclude_st/exclude_suspended，默认 false/true；叠加时使用原规则参数和排除设置。停牌、零成交量当天不触发信号，即使关闭排除停牌也不会生成技术买卖信号。排除历史 ST 时，状态未知不能放行。
+
+需要 stock_basic、trade_cal、daily、adj_factor、suspend_d 固定版本；缺少依赖版本返回409，日期非交易日返回422。窗口日历、行情、复权因子或完整覆盖不足时，对应策略返回 insufficient_data。多策略 OR：有 true 即 true，否则有 unknown 即 unknown，否则 false；规则叠加 AND：有 false 即 false，否则有 unknown 即 unknown，否则 true。与信号无关的股息缺失不改变独立信号命中判断。
+
+signal_results 保存每种策略的状态、方向、trade_date、parameters、matched、reason、evidence 和版本。所有数值行情读取止于筛选日。共享日历和窗口覆盖，按256只分批读取行情/复权/停牌；算法仍逐策略验证自己的窗口。任务快照保存 _signal_version 和各 _strategy_version_*；中断恢复沿用原快照，不兼容版本拒绝执行。
+
+历史任务名称说明规则含义，如“规则 A：高股息 + 单日下跌”，副行展示保存的实际阈值与排除设置。信号任务展示策略、方向、参数；叠加任务同时说明两类条件。F保留启用条件的 AND/OR 层级，长条件可展开。不能用当前默认值补填旧任务，缺失参数或未知规则版本明确显示未知。旧结果不补算信号、不改写文件；新增CSV信号信息及固定版本/fixture标记。
+
+## 近期分红（计算版本1.0.0）
+
+独立筛选及规则/策略叠加条件，默认未来30个自然日，可调1–365。窗口为`筛选日 < 股权登记日 <= 筛选日+days`；仅纳入公告日及实施公告日均早于筛选日、进度为实施、税前每股现金为正的安排。筛选日当天公告按保守口径不放行，预案及未来公告不影响结果或质量标记。重复事件去重，冲突金额/除息日/派息日返回未知；覆盖不足且无可靠事件时为数据不足，有可靠正例可确认存在近期安排。
+
+每10股派息=`cash_div_tax*10`；万元预计税前分红=`10000/筛选日未复权收盘价*cash_div_tax`，按金额比例允许小数股，四舍五入保留两位小数，不扣税费。无筛选日有效价格时未知，不回退历史价格。送转不计入预计现金。万元估算不代表持股登记资格或到账金额。待派息安排不进入历史股息率、回测或到账分红；旧任务结果不重写，新筛选继续排除固定证券版本中的已退市股票。

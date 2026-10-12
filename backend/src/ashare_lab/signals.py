@@ -2,11 +2,25 @@
 
 from datetime import date, timedelta
 from math import isfinite, sqrt
-from typing import Any
+from typing import Any, Protocol
+
+import polars as pl
 
 from ashare_lab.factors import adjusted_prices
 from ashare_lab.schemas import StrategyConfig
-from ashare_lab.warehouse import MarketRepository
+
+
+class SignalRepository(Protocol):
+    def read(
+        self,
+        dataset: str,
+        snapshot: dict[str, str],
+        codes: list[str] | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> pl.DataFrame: ...
+
+    def coverage(self, dataset: str, snapshot: dict[str, str]) -> dict[str, Any]: ...
 
 
 def warmup(config: StrategyConfig) -> int:
@@ -110,7 +124,7 @@ def signal(
 
 
 def calculate_signal(
-    repository: MarketRepository,
+    repository: SignalRepository,
     stock_code: str,
     config: StrategyConfig,
     trade_date: str,

@@ -1,5 +1,6 @@
 """Explicit public routes; inputs and delegation only, no signal rules."""
 
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Query, Request, Response
@@ -9,7 +10,16 @@ from ashare_lab.notifications import NotificationService, SubscriptionRequest
 from ashare_lab.schemas import StrictModel
 
 PREFIX = "/api/v1/notifications"
-COOKIE = "ashare_notification_session"
+COOKIE = "ashare_user_session"
+LEGACY_COOKIE = "ashare_notification_session"
+COOKIE_PATH = "/api/v1"
+
+
+def session_token(request: Request, allow_legacy: bool = False) -> str:
+    # Never fall back to another identity when a new-format cookie is present.
+    if COOKIE in request.cookies:
+        return request.cookies[COOKIE]
+    return request.cookies.get(LEGACY_COOKIE, "") if allow_legacy else ""
 
 
 class TargetRequest(StrictModel):
@@ -44,18 +54,35 @@ def router_for(service: NotificationService) -> APIRouter:
     router = APIRouter(prefix=PREFIX)
 
     def owner(request: Request) -> str:
-        return service.authenticate(request.cookies.get(COOKIE, ""))
+        return service.authenticate(session_token(request, allow_legacy=True))
+
+    def clear_legacy(response: Response) -> None:
+        response.delete_cookie(
+            LEGACY_COOKIE,
+            path=PREFIX,
+            httponly=True,
+            secure=service.settings.notification_cookie_secure,
+            samesite="lax",
+        )
 
     def session_response(response: Response, value: dict[str, str]) -> dict[str, str]:
         response.set_cookie(
             COOKIE,
             value["session"],
-            max_age=service.settings.notification_session_days * 86400,
+            max_age=max(
+                0,
+                int(
+                    (
+                        datetime.fromisoformat(value["expires_at"]) - datetime.now(UTC)
+                    ).total_seconds()
+                ),
+            ),
             httponly=True,
             secure=service.settings.notification_cookie_secure,
             samesite="lax",
-            path=PREFIX,
+            path=COOKIE_PATH,
         )
+        clear_legacy(response)
         response.headers["Cache-Control"] = "no-store"
         return {key: value[key] for key in ("owner_id", "email", "expires_at")}
 
@@ -66,24 +93,33 @@ def router_for(service: NotificationService) -> APIRouter:
     @router.post("/auth/email/verify")
     def login(payload: CodeRequest, request: Request, response: Response) -> dict[str, str]:
         value = service.login(payload.address, payload.code)
-        service.logout(request.cookies.get(COOKIE, ""))
+        for cookie in (COOKIE, LEGACY_COOKIE):
+            service.logout(request.cookies.get(cookie, ""))
         return session_response(response, value)
 
     @router.get("/session")
     def session(request: Request, response: Response) -> dict[str, str]:
         response.headers["Cache-Control"] = "no-store"
-        return service.session_info(request.cookies.get(COOKIE, ""))
+        token = session_token(request, allow_legacy=True)
+        value = service.session_info(token)
+        if COOKIE not in request.cookies:
+            return session_response(response, {**value, "session": token})
+        if LEGACY_COOKIE in request.cookies:
+            clear_legacy(response)
+        return value
 
     @router.delete("/session")
     def logout(request: Request, response: Response) -> dict[str, str]:
-        service.logout(request.cookies.get(COOKIE, ""))
+        for cookie in (COOKIE, LEGACY_COOKIE):
+            service.logout(request.cookies.get(cookie, ""))
         response.delete_cookie(
             COOKIE,
-            path=PREFIX,
+            path=COOKIE_PATH,
             httponly=True,
             secure=service.settings.notification_cookie_secure,
             samesite="lax",
         )
+        clear_legacy(response)
         return {"status": "signed_out"}
 
     @router.post("/account/email/verification")

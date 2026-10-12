@@ -14,10 +14,12 @@ from sqlalchemy import select, text
 from ashare_lab.backtest import BACKTEST_VERSION, STRATEGY_VERSION
 from ashare_lab.backtest import prepare as prepare_backtest
 from ashare_lab.backtest import simulate as simulate_backtest
+from ashare_lab.company import CompanyService
 from ashare_lab.comparison import COMPARISON_VERSION, prepare_comparison, simulate_comparison
 from ashare_lab.config import Settings
 from ashare_lab.db import Database, identifier, jobs, now
 from ashare_lab.dca import DCA_VERSION, prepare, simulate
+from ashare_lab.dividends import DIVIDEND_VERSION
 from ashare_lab.factors import FACTOR_VERSION
 from ashare_lab.notifications import NotificationService
 from ashare_lab.portfolio import PORTFOLIO_VERSION, prepare_portfolio, simulate_portfolio
@@ -39,6 +41,7 @@ from ashare_lab.schemas import (
     ScreeningRequest,
 )
 from ashare_lab.screening import ScreeningEngine
+from ashare_lab.signal_screening import SIGNAL_SCREENING_VERSION, strategy_version
 from ashare_lab.sync import SyncService
 from ashare_lab.warehouse import MarketRepository
 
@@ -81,6 +84,7 @@ class Worker:
                     "backtest",
                     "portfolio",
                     "notification_signal",
+                    "company_profile",
                 }:
                     interruptions = snapshot.get("_recovery_interruptions", 0) + 1
                     snapshot["_recovery_interruptions"] = interruptions
@@ -192,6 +196,11 @@ class Worker:
                 ).run(job, lambda: self.check(job_id), before_complete=before_complete)
                 if completion_prepared:
                     return
+                status = "partial" if result["warnings"] else "succeeded"
+            elif job["kind"] == "company_profile":
+                result = CompanyService(self.settings, self.db, self.repository).execute(
+                    job, self.provider, lambda: self.check(job_id)
+                )
                 status = "partial" if result["warnings"] else "succeeded"
             elif job["kind"] == "notification_signal":
                 result = self.notifications.execute_signal(job)
@@ -330,7 +339,21 @@ class Worker:
                         "任务固定的计算版本与当前版本不同，请使用对应版本执行",
                     )
                 job["snapshot"].setdefault("_universe_policy", "historical_v0")
+                if job["snapshot"].get("_dividend_version", DIVIDEND_VERSION) != DIVIDEND_VERSION:
+                    raise ProviderError("incompatible_engine_version", "近期分红计算版本不兼容")
                 request = ScreeningRequest.model_validate(job["payload"])
+                if request.signal_filter and (
+                    job["snapshot"].get("_signal_version") != SIGNAL_SCREENING_VERSION
+                    or any(
+                        job["snapshot"].get(f"_strategy_version_{config.id}")
+                        != strategy_version(config)
+                        for config in request.signal_filter.strategies
+                    )
+                ):
+                    raise ProviderError(
+                        "incompatible_engine_version",
+                        "任务固定的信号算法版本与当前版本不同，请使用对应版本执行",
+                    )
                 rows = ScreeningEngine(self.repository).run(
                     request,
                     job["snapshot"],
@@ -353,6 +376,8 @@ class Worker:
                                 "data_quality_flags",
                                 "matched_factors",
                                 "condition_results",
+                                "signal_results",
+                                "recent_dividend",
                             }
                         },
                         **{
@@ -362,6 +387,8 @@ class Worker:
                                 "data_quality_flags",
                                 "matched_factors",
                                 "condition_results",
+                                *(["signal_results"] if "signal_results" in row else []),
+                                *(["recent_dividend"] if "recent_dividend" in row else []),
                             ]
                         },
                     }
@@ -382,6 +409,12 @@ class Worker:
                             "data_quality_flags": pl.String,
                             "matched_factors": pl.String,
                             "condition_results": pl.String,
+                            **({"signal_results": pl.String} if request.signal_filter else {}),
+                            **(
+                                {"recent_dividend": pl.String}
+                                if job["snapshot"].get("_dividend_version")
+                                else {}
+                            ),
                         }
                     )
                 )
@@ -397,6 +430,17 @@ class Worker:
                     ),
                     "rule_version": RULE_VERSION,
                     "factor_version": FACTOR_VERSION,
+                    "fixture_mode": any(
+                        self.repository.version(version, resolve_coverage=False)["source"]
+                        == "fixture"
+                        for key, version in job["snapshot"].items()
+                        if not key.startswith("_")
+                    ),
+                    **(
+                        {"signal_version": SIGNAL_SCREENING_VERSION}
+                        if request.signal_filter
+                        else {}
+                    ),
                 }
                 status = "succeeded"
             else:

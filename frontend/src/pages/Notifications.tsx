@@ -2,6 +2,8 @@ import { CheckCircle2, PauseCircle, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
+import EmailCodeForm from "../components/EmailCodeForm";
+import { useOptionalUserSession } from "../userSession";
 import {
   parameterLabels,
   strategies,
@@ -137,118 +139,14 @@ export function strategySummary(config: StrategyConfig): string {
 
 type SessionInfo = { owner_id: string; email: string; expires_at: string };
 
-function EmailCodeForm({
-  change = false,
-  busy,
-  available,
-  onSend,
-  onVerify,
-}: {
-  change?: boolean;
-  busy: boolean;
-  available: boolean;
-  onSend: (address: string) => Promise<number | null>;
-  onVerify: (address: string, code: string) => Promise<void>;
-}) {
-  const [address, setAddress] = useState("");
-  const [code, setCode] = useState("");
-  const [pendingAddress, setPendingAddress] = useState("");
-  const [resendAt, setResendAt] = useState(0);
-  const [remaining, setRemaining] = useState(0);
-  useEffect(() => {
-    if (!resendAt) return;
-    const tick = () =>
-      setRemaining(Math.max(0, Math.ceil((resendAt - Date.now()) / 1000)));
-    tick();
-    const timer = window.setInterval(tick, 1000);
-    return () => window.clearInterval(timer);
-  }, [resendAt]);
-  async function send() {
-    const requestedAddress = address.trim();
-    const seconds = await onSend(requestedAddress);
-    if (seconds !== null) {
-      setPendingAddress(requestedAddress);
-      setCode("");
-      setRemaining(seconds);
-      setResendAt(Date.now() + seconds * 1000);
-    }
-  }
-  return (
-    <div className="space-y-3">
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          void send();
-        }}
-        className="flex flex-wrap items-end gap-3"
-      >
-        <label>
-          {change ? "新邮箱" : "登录邮箱"}
-          <input
-            required
-            type="email"
-            autoComplete="email"
-            maxLength={254}
-            value={address}
-            disabled={busy}
-            onChange={(e) => {
-              setAddress(e.target.value);
-              setCode("");
-              setPendingAddress("");
-            }}
-          />
-        </label>
-        <Button
-          disabled={busy || !available || !address.trim() || remaining > 0}
-        >
-          {remaining > 0
-            ? `${remaining}秒后重发`
-            : change
-              ? "发送更换验证码"
-              : "发送登录验证码"}
-        </Button>
-      </form>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          void onVerify(pendingAddress, code);
-        }}
-        className="flex flex-wrap items-end gap-3"
-      >
-        <label>
-          {change ? "新邮箱验证码" : "登录验证码"}
-          <input
-            required
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            pattern="[0-9]{6}"
-            maxLength={6}
-            value={code}
-            disabled={busy || !pendingAddress}
-            onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, ""))}
-          />
-        </label>
-        <Button
-          disabled={
-            busy || !available || !pendingAddress || !/^[0-9]{6}$/.test(code)
-          }
-        >
-          {change ? "确认更换邮箱" : "验证码登录"}
-        </Button>
-      </form>
-      <p className="text-xs">
-        验证码有效10分钟，最多五次尝试；重发后旧码失效。
-      </p>
-    </div>
-  );
-}
-
 export default function Notifications({
   unsubscribe = false,
 }: {
   unsubscribe?: boolean;
 }) {
   const [query, setQuery] = useSearchParams();
+  const sharedSession = useOptionalUserSession();
+  const sharedIdentity = useRef("");
   const unsubscribeToken = useRef(window.location.hash.slice(1));
   const [options, setOptions] = useState<Options>();
   const [owner, setOwner] = useState(false);
@@ -324,7 +222,7 @@ export default function Notifications({
       if (epoch === identityEpoch.current) throw e;
     }
   }
-  function clearPrivate() {
+  function clearPrivate(navigate = true) {
     identityEpoch.current += 1;
     setOwner(false);
     setAccountEmail("");
@@ -345,30 +243,33 @@ export default function Notifications({
     setConfig(initialConfig.current);
     setDirections(["buy", "sell"]);
     selectedInitialized.current = false;
-    setQuery(
-      (current) => {
-        const next = new URLSearchParams(current);
-        next.set("tab", "settings");
-        return next;
-      },
-      { replace: true },
-    );
+    if (navigate)
+      setQuery(
+        (current) => {
+          const next = new URLSearchParams(current);
+          next.set("tab", "settings");
+          return next;
+        },
+        { replace: true },
+      );
   }
   function reportError(e: unknown) {
     if (e instanceof ApiError && e.status === 401) {
       clearPrivate();
+      sharedSession?.adopt(null);
       setNotice("");
     }
     setError(e instanceof Error ? e.message : "请求失败");
   }
   async function action(work: () => Promise<void>) {
+    const epoch = identityEpoch.current;
     setBusy(true);
     setError("");
     setNotice("");
     try {
       await work();
     } catch (e) {
-      reportError(e);
+      if (epoch === identityEpoch.current) reportError(e);
     } finally {
       setBusy(false);
     }
@@ -391,28 +292,55 @@ export default function Notifications({
         if (!disposed) setOptions(value);
       })
       .catch((e) => setError(String(e)));
-    void api<SessionInfo>("/notifications/session")
-      .then((value) => {
-        if (!disposed && epoch === identityEpoch.current) {
-          setOwner(true);
-          setAccountEmail(value.email);
-        }
-      })
-      .catch((e) => {
-        if (
-          !disposed &&
-          epoch === identityEpoch.current &&
-          !(e instanceof ApiError && e.status === 401)
-        )
-          reportError(e);
-      });
+    if (!sharedSession)
+      void api<SessionInfo>("/notifications/session")
+        .then((value) => {
+          if (!disposed && epoch === identityEpoch.current) {
+            setOwner(true);
+            setAccountEmail(value.email);
+          }
+        })
+        .catch((e) => {
+          if (
+            !disposed &&
+            epoch === identityEpoch.current &&
+            !(e instanceof ApiError && e.status === 401)
+          )
+            reportError(e);
+        });
     return () => {
       disposed = true;
     };
-  }, [unsubscribe]);
+  }, [unsubscribe, Boolean(sharedSession)]);
+  useEffect(() => {
+    if (!sharedSession || unsubscribe) return;
+    if (sharedSession.session) {
+      const identity = `${sharedSession.session.owner_id}:${sharedSession.session.email}`;
+      if (sharedIdentity.current === identity) return;
+      sharedIdentity.current = identity;
+      clearPrivate(false);
+      setOwner(true);
+      setAccountEmail(sharedSession.session.email);
+    } else {
+      sharedIdentity.current = "";
+      if (owner) clearPrivate();
+    }
+  }, [
+    sharedSession?.session?.owner_id,
+    sharedSession?.session?.email,
+    sharedSession?.status,
+    unsubscribe,
+  ]);
   useEffect(() => {
     if (owner && !unsubscribe) void reload().catch(reportError);
-  }, [owner, filter, offset, unsubscribe]);
+  }, [
+    owner,
+    filter,
+    offset,
+    unsubscribe,
+    sharedSession?.session?.owner_id,
+    sharedSession?.session?.email,
+  ]);
   useEffect(() => {
     if (!owner || !search) {
       setMatches([]);
@@ -489,6 +417,7 @@ export default function Notifications({
       clearPrivate();
       setOwner(true);
       setAccountEmail(value.email);
+      sharedSession?.adopt(value);
       setQuery(
         (current) => {
           const next = new URLSearchParams(current);
@@ -504,6 +433,7 @@ export default function Notifications({
   async function signOut() {
     await action(async () => {
       await api("/notifications/session", { method: "DELETE" });
+      sharedSession?.adopt(null);
       clearPrivate();
       setNotice("已退出当前设备的登录");
     });

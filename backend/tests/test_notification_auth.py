@@ -376,7 +376,7 @@ def test_migration_interruption_rolls_back_and_can_resume(tmp_path):
     db.initialize()
     db.initialize()
     with db.engine.connect() as conn:
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0007"
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0009"
         assert conn.execute(text("PRAGMA foreign_key_check")).all() == []
 
 
@@ -473,6 +473,6 @@ def test_manual_sample_migration_rollback_and_old_history(tmp_path):
     db.initialize()
     db.initialize()
     with db.engine.connect() as conn:
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0007"
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0009"
         assert conn.execute(select(owners.c.id)).scalar() == "legacy"
         assert conn.execute(text("PRAGMA foreign_key_check")).all() == []

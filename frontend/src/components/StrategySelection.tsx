@@ -8,20 +8,28 @@ import {
 export default function StrategySelection({
   selected,
   onChange,
+  purpose = "comparison",
 }: {
   selected: StrategyConfig[];
   onChange: (value: StrategyConfig[]) => void;
+  purpose?: "comparison" | "screening";
 }) {
+  const available = strategies.filter(
+    (item) => purpose !== "screening" || item.id !== "buy_hold",
+  );
   return (
     <fieldset className="mt-4 space-y-2">
       <legend className="font-medium">
-        策略对比 · 已选 {selected.length} / 6
+        {purpose === "screening" ? "信号策略" : "策略对比"} · 已选{" "}
+        {selected.length} / {available.length}
       </legend>
       <p className="text-xs text-muted-foreground">
-        各策略独立使用相同资金和费用；只选一个也可运行。预热只计算指标，不成交。
+        {purpose === "screening"
+          ? "按筛选日收盘判断，任一策略触发所选方向即满足。信号不代表已成交。"
+          : "各策略独立使用相同资金和费用；只选一个也可运行。预热只计算指标，不成交。"}
       </p>
       <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-        {strategies.map((strategy) => {
+        {available.map((strategy) => {
           const current = selected.find((item) => item.id === strategy.id);
           const config: StrategyConfig = current ?? {
             id: strategy.id,
@@ -49,7 +57,9 @@ export default function StrategySelection({
                 {strategy.rule}
               </p>
               <p className="text-xs text-muted-foreground">
-                {strategy.label}预热：开始日前 {warmupDays(config)} 个交易日
+                {strategy.label}预热：
+                {purpose === "screening" ? "筛选日" : "开始日"}前{" "}
+                {warmupDays(config)} 个交易日
               </p>
               {Object.keys(strategy.defaults).length > 0 && (
                 <details className="mt-2">

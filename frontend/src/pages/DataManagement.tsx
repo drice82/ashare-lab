@@ -9,6 +9,7 @@ import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { activeJob, statusLabels } from "../format";
 import type { Job, MarketStatus } from "../types";
+import BrowsingStatistics from "./BrowsingStatistics";
 
 const datasetNames: Record<string, string> = {
   stock_basic: "股票基础信息",
@@ -30,7 +31,7 @@ export default function DataManagement() {
     const lock = () => {
       setPassword("");
       setInput("");
-      setError("数据管理认证已失效，请重新输入密码");
+      setError("后台管理认证已失效，请重新输入密码");
     };
     window.addEventListener("ashare-data-locked", lock);
     return () => window.removeEventListener("ashare-data-locked", lock);
@@ -39,8 +40,8 @@ export default function DataManagement() {
   return (
     <>
       <PageTitle
-        title="数据管理"
-        subtitle="请输入独立的数据管理密码。离开页面或刷新后需要重新输入。"
+        title="后台管理"
+        subtitle="请输入独立的后台管理密码。离开页面或刷新后需要重新输入。"
       />
       <ErrorBanner message={error} />
       <Card className="p-6 max-w-md">
@@ -62,9 +63,9 @@ export default function DataManagement() {
           }}
         >
           <label>
-            数据管理密码
+            后台管理密码
             <input
-              aria-label="数据管理密码"
+              aria-label="后台管理密码"
               type="password"
               autoComplete="off"
               value={input}
@@ -72,7 +73,7 @@ export default function DataManagement() {
             />
           </label>
           <Button className="mt-4" disabled={busy || !input} type="submit">
-            解锁数据管理
+            解锁后台管理
           </Button>
         </form>
       </Card>
@@ -154,13 +155,26 @@ function Management({ password }: { password: string }) {
   return (
     <>
       <PageTitle
-        title="数据管理"
-        subtitle="将数据同步到本地仓库，查看覆盖范围、版本与任务日志。"
+        title="后台管理"
+        subtitle="管理数据同步、查看任务日志与用户浏览统计。"
       />
       <ErrorBanner message={error || status.error || task.error} />
       <ModuleTabs
         mainLabel="数据管理"
         historyLabel="同步任务"
+        extraTabs={[
+          {
+            key: "analytics",
+            label: "浏览统计",
+            content: (
+              <BrowsingStatistics
+                password={password}
+                active={query.get("tab") === "analytics"}
+                fixtureMode={status.data?.fixture_mode}
+              />
+            ),
+          },
+        ]}
         history={(active) => (
           <>
             <Card>

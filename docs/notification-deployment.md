@@ -1,5 +1,15 @@
 # 通知部署与真实接入验收
 
+## 多自选列表与共用登录会话（0009，开发服务器已部署）
+
+2026-10-12按用户授权协调更新API／Worker／Web，后端9c801feb9719、Web38e358141524；自选入口 https://niu.kaistar.net/watchlists ，原域名兼容。0008→0009新增watchlists，复用稳定邮箱账号与会话，原25张业务表结构与旧应用一致，旧研究8个响应保持一致；quick_check=ok、外键检查无错误，服务健康、重启0、OOM=false。
+
+按本次明确要求没有备份或复制开发数据库。原行情卷、.env、加密密钥、SMTP、Secure Cookie和现有自动发送true保持不变。新Cookie为ashare_user_session，Path=/api/v1；旧通知Cookie在现有会话查询中验证后迁移并删除旧path，不延长原有效期。部署前后的旧研究摘要及上线验收期间关键数据核对、检查范围限制详见docs/development.md。
+
+主域名／旧域名桌面1440px和手机390px公网自选维护／筛选和组合调用／登录弹窗检查通过，私有401、跨源403、页面错误0、溢出0，fixture=false。验收只维护独立浏览器本机列表，未创建线上账号／研究任务或主动发送验证码／测试邮件；真实账号登录和SMTP实收留待用户主动核对。报告及截图在私有/tmp/niuniu-watchlists-deploy，不含数据库备份或环境秘密。
+
+旧镜像保留pre-watchlists-20261012标签；旧迁移代码不识别0009，不能直接对新库启动，仅用于受控兼容重建参考。历史备份要求见以下历史章节，本次以用户明确“不备份数据库”指令为准。
+
 ## Webhook及三页签版本（0006，开发服务器已部署）
 
 部署时先备份一致SQLite及保留旧镜像，协调停止旧API/Worker后迁移，再以匹配版本启动API、Worker和Web，避免旧Bark发送器在退役过程中继续投递。保留现有Fernet密钥、SMTP和自动发送设置，不重新生成密钥。0006停用旧Bark、取消其待发送记录，保留账号、会话、检查、历史发送、邮件修订和排队邮件；仅Bark的订阅暂停。用户需在第三页签重新绑定Webhook并明确修改订阅。上线核对迁移标记、邮件继续投递、旧历史可查、私有401和同源保护。0006降级不会恢复旧凭据或队列；回退不得直接启用旧Bark发送器或覆盖有新业务的数据库。
@@ -83,3 +93,6 @@ API与Worker使用同一 `NOTIFICATION_ENCRYPTION_KEY`（Fernet密钥），通�
 入口：https://niuniu.kaistar.net/notifications。已升级至0007并切换API/Worker/Web，后端镜像6aabf4a46454、Web镜像5b8b9f3f3722；三个服务正常，API健康，重启0且非OOM。用户说明开发服务器不一定需要数据库备份，本轮未额外备份；保留pre-notification-usability-20261011旧镜像标签。迁移重复初始化、外键检查、10张旧表行数/内容摘要及8个原研究响应一致性核对通过，新手动测试表为空。原密钥/SMTP/自动发送true及数据卷保留。
 
 Docker内84项通知相关测试、Ruff、mypy、前端tsc/build通过；安装源码与工作区41文件完全一致。公网HTTP200、私有401、跨源403和1440/390px只读浏览器通过，页面错误/横向溢出/业务写请求均0。此次未主动发送验证码或通知，公网Webhook和真实邮箱实收需用户通过新测试入口核对。脱敏报告及截图仅位于/tmp/niuniu-notification-usability-deploy，非数据库备份。
+
+
+2026-10-11主域名更新：NOTIFICATION_PUBLIC_URL=https://niu.kaistar.net，用于通知退订等链接及同源验证；PUBLIC_URL_ALIASES=https://niuniu.kaistar.net显式允许原域名作为兼容入口。别名为逗号分隔的纯HTTP(S) origin，禁止路径、查询、fragment或用户名；浏览上报和通知写请求共同检查主域名、别名或请求base_url，未知来源仍拒绝。浏览器Cookie保持Secure/HttpOnly/Lax及原path，两个域名的浏览器存储和登录Cookie各自独立，邮箱账号及后台密码共用原数据库。

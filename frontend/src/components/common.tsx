@@ -1,4 +1,5 @@
 import StockIdentity from "./StockIdentity";
+import ScreeningDescription from "./ScreeningDescription";
 import { ArrowUpRight, Clock3, LoaderCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { statusLabels } from "../format";
@@ -90,7 +91,11 @@ export function TaskTable({
                 ) : job.kind === "portfolio" ? (
                   `组合 · ${job.payload.members.length}只股票`
                 ) : job.kind === "screening" ? (
-                  `规则 ${job.payload.rule_id} · ${job.payload.as_of_date}`
+                  <ScreeningDescription
+                    compact
+                    definition={job.payload}
+                    ruleVersion={job.snapshot?._rule_version}
+                  />
                 ) : job.payload.mode === "namechange" ? (
                   "历史名称更新"
                 ) : (

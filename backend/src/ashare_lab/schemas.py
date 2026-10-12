@@ -33,11 +33,30 @@ class Universe(StrictModel):
         return self
 
 
+class DividendFilter(StrictModel):
+    days: int = Field(default=30, ge=1, le=365, strict=True)
+
+
 class ScreeningRequest(StrictModel):
     as_of_date: date
     universe: Universe = Field(default_factory=Universe)
-    rule_id: Literal["A", "B", "C", "D", "E", "F"]
+    mode: Literal["rule", "signal", "rule_signal", "dividend"] = "rule"
+    rule_id: Literal["A", "B", "C", "D", "E", "F"] | None = None
     parameters: dict[str, Any] = Field(default_factory=dict)
+    signal_filter: "SignalFilter | None" = None
+    dividend_filter: DividendFilter | None = None
+
+    @model_validator(mode="after")
+    def validate_mode(self) -> "ScreeningRequest":
+        if self.mode in {"signal", "dividend"} and self.rule_id is not None:
+            raise ValueError("独立筛选不得指定规则")
+        if self.mode in {"rule", "rule_signal"} and self.rule_id is None:
+            raise ValueError("规则筛选必须指定规则")
+        if (self.mode in {"rule", "dividend"}) != (self.signal_filter is None):
+            raise ValueError("信号筛选必须指定策略，其他独立筛选不得附带信号条件")
+        if self.mode == "dividend" and self.dividend_filter is None:
+            raise ValueError("近期分红筛选必须指定登记窗口")
+        return self
 
 
 class SyncRequest(StrictModel):
@@ -182,6 +201,23 @@ class StrategyConfig(StrictModel):
     @model_serializer
     def serialize(self) -> dict[str, Any]:
         return {"id": self.id, **{key: getattr(self, key) for key in STRATEGY_FIELDS[self.id]}}
+
+
+class SignalFilter(StrictModel):
+    strategies: list[StrategyConfig] = Field(min_length=1, max_length=5)
+    direction: Literal["buy", "sell", "either"] = "buy"
+
+    @model_validator(mode="after")
+    def validate_strategies(self) -> "SignalFilter":
+        if any(item.id == "buy_hold" for item in self.strategies):
+            raise ValueError("信号筛选仅支持五种技术策略")
+        if len({item.id for item in self.strategies}) != len(self.strategies):
+            raise ValueError("每种策略最多选择一组参数")
+        return self
+
+
+ScreeningRequest.model_rebuild()
+PresetRequest.model_rebuild()
 
 
 class BacktestCompareRequest(BacktestCommonRequest):

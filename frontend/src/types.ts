@@ -30,30 +30,45 @@ export interface Factor {
 }
 export interface ScreeningDefinition {
   as_of_date: string;
-  rule_id: string;
+  mode?: "rule" | "signal" | "rule_signal" | "dividend";
+  rule_id: string | null;
   universe: { type: "all" | "custom"; codes: string[] };
   parameters: Parameters;
+  dividend_filter?: { days: number } | null;
+  signal_filter?: {
+    strategies: import("./comparison").StrategyConfig[];
+    direction: "buy" | "sell" | "either";
+  } | null;
 }
-export interface Job {
+interface JobBase {
   snapshot?: Record<string, string>;
   id: string;
-  kind: "sync" | "screening";
   status: string;
   progress: number;
   created_at: string;
   heartbeat: string | null;
   error: string | null;
-  payload: ScreeningDefinition & {
-    mode?: "initialize" | "incremental" | "namechange" | "dividend";
-  };
   result: {
     matched: number;
     total: number;
     insufficient_data: number;
+    fixture_mode?: boolean;
     warnings?: string[];
   } | null;
   logs?: { at: string; level: string; message: string }[];
 }
+export type ScreeningJob = JobBase & {
+  kind: "screening";
+  payload: ScreeningDefinition;
+};
+export type Job =
+  | ScreeningJob
+  | (JobBase & {
+      kind: "sync";
+      payload: {
+        mode?: "initialize" | "incremental" | "namechange" | "dividend";
+      };
+    });
 export interface Dataset {
   dataset: string;
   version_id: string;
@@ -109,7 +124,7 @@ export interface MarketStatus {
   missing_trade_dates: string[];
   token_configured: boolean;
   fixture_mode: boolean;
-  recent_screening: Job[];
+  recent_screening: ScreeningJob[];
   recent_sync: Job[];
   latest_sync_status?: string | null;
   pit_limitation: string;
@@ -124,7 +139,7 @@ export interface ScreeningRow {
   stock_name: string;
   as_of_date: string;
   latest_trade_date: string | null;
-  rule_id: string;
+  rule_id: string | null;
   match_status: string;
   factor_values: Record<string, FactorValue>;
   data_quality_flags: string[];
@@ -135,13 +150,33 @@ export interface ScreeningRow {
     actual: FactorValue;
     matched: boolean | null;
   }[];
+  signal_results?: SignalResult[];
+  recent_dividend?: RecentDividend;
+}
+export interface SignalResult {
+  strategy_id: import("./comparison").StrategyId;
+  parameters: import("./comparison").StrategyConfig;
+  status: "checked" | "insufficient_data" | "inactive_instrument";
+  direction: "buy" | "sell" | null;
+  trade_date: string;
+  matched: boolean | null;
+  reason: string;
+  evidence?: Record<string, number | string>;
 }
 export interface Results {
   items: ScreeningRow[];
   total: number;
   page: number;
   page_size: number;
-  summary: { matched: number; total: number; insufficient_data: number };
+  summary: {
+    matched: number;
+    total: number;
+    insufficient_data: number;
+    signal_version?: string;
+    as_of_date?: string;
+    effective_market_dates?: string[];
+    missing_market_dates?: number;
+  };
 }
 export interface Bar {
   trade_date: string;
@@ -247,8 +282,10 @@ export interface DcaResults {
   parameters: DcaDefinition;
   assumptions: Record<string, string>;
 }
-export interface BacktestDefinition
-  extends Omit<DcaDefinition, "monthly_amount" | "monthly_day"> {
+export interface BacktestDefinition extends Omit<
+  DcaDefinition,
+  "monthly_amount" | "monthly_day"
+> {
   initial_cash: string;
   strategy: "buy_hold" | "ma_cross";
   short_window: number;
@@ -275,8 +312,10 @@ export interface BacktestOptions extends Omit<DcaOptions, "defaults"> {
     "stock_code" | "start_date" | "end_date" | "data_versions"
   >;
 }
-export interface BacktestResults
-  extends Omit<DcaResults, "summary" | "items" | "parameters"> {
+export interface BacktestResults extends Omit<
+  DcaResults,
+  "summary" | "items" | "parameters"
+> {
   summary: BacktestSummary;
   items: (DcaRow & { signal_date: string | null; tax: number })[];
   parameters: BacktestDefinition;
@@ -287,3 +326,38 @@ export type ResearchJob =
   | BacktestJob
   | import("./comparison").ComparisonJob
   | import("./portfolio").PortfolioJob;
+
+export interface DividendEvent {
+  end_date: string | null;
+  ann_date: string | null;
+  imp_ann_date: string | null;
+  record_date: string;
+  ex_date: string | null;
+  pay_date: string | null;
+  cash_per_share: number;
+  cash_per_10: number;
+  estimated_cash_10000: number | null;
+}
+export interface RecentDividend {
+  matched: boolean | null;
+  days: number;
+  events: DividendEvent[];
+  flags: string[];
+}
+export interface CompanySection {
+  status: string;
+  items: Record<string, string | number | null>[];
+  source: string;
+  fetched_at: string;
+  message?: string;
+}
+export interface CompanyProfile {
+  stock_code: string;
+  as_of_date: string | null;
+  data_version: string | null;
+  sections: Record<string, CompanySection>;
+  valuation?: Record<string, string | number | null>;
+  fixture_mode: boolean;
+  stale: boolean;
+  job: { id: string; status: string; progress: number } | null;
+}

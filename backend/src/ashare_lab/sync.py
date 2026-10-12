@@ -3,7 +3,7 @@ from collections import deque
 from collections.abc import Callable, Generator, Iterable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from contextlib import closing
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -23,6 +23,8 @@ from ashare_lab.schemas import SyncRequest, Universe
 from ashare_lab.warehouse import MarketRepository
 
 OPTIONAL = {"stk_limit", "suspend_d", "namechange", "daily_basic", "adj_factor", "dividend"}
+# The shared SSE calendar returned by Tushare starts on this date.
+SSE_CALENDAR_START = date(1990, 12, 19)
 
 
 def prefetch[T, R](
@@ -101,6 +103,21 @@ class SyncService:
         job_id = job["id"]
         warnings: list[str] = []
         unavailable: set[str] = set()
+        excluded_delisted_codes: set[str] = set()
+        if not history_only and start < SSE_CALENDAR_START:
+            if end < SSE_CALENDAR_START:
+                raise ProviderError(
+                    "calendar_unsupported_range",
+                    "当前上交所交易日历仅支持 1990-12-19 及之后的日期，请调整同步范围",
+                )
+            message = (
+                f"当前上交所交易日历从 {SSE_CALENDAR_START} 开始，"
+                f"请求范围 {start} 至 {SSE_CALENDAR_START - timedelta(days=1)} 无法覆盖；"
+                f"实际同步从 {SSE_CALENDAR_START} 开始"
+            )
+            warnings.append(message)
+            self.db.log(job_id, "warning", message)
+            start = SSE_CALENDAR_START
 
         def fetch(
             dataset: str,
@@ -135,7 +152,33 @@ class SyncService:
                     raise ProviderError(
                         "empty_market_day", f"{params.get('trade_date')} 日线为空，可能尚未入库"
                     )
-                normalized = normalize(dataset, frame, self.provider.source, job_id)
+                if (
+                    excluded_delisted_codes
+                    and params.get("trade_date")
+                    and "ts_code" not in params
+                    and frame.height
+                    and "ts_code" in frame.columns
+                ):
+                    raw_count = frame.height
+                    frame = frame.filter(
+                        ~pl.col("ts_code")
+                        .cast(pl.String)
+                        .is_in(excluded_delisted_codes)
+                        .fill_null(False)
+                    )
+                    if frame.height != raw_count:
+                        self.db.log(
+                            job_id,
+                            "info",
+                            f"{dataset} {key}: 按新股票池排除 {raw_count - frame.height} 行已退市证券",
+                        )
+                normalized = normalize(
+                    dataset,
+                    frame,
+                    self.provider.source,
+                    job_id,
+                    quarantine_ohlc=modern and dataset == "daily",
+                )
                 if (
                     params.get("ts_code")
                     and normalized.height
@@ -153,7 +196,9 @@ class SyncService:
                     actual = set(normalized["cal_date"].to_list()) if normalized.height else set()
                     if (
                         actual != expected
-                        or normalized.filter(~pl.col("is_open").is_in([0, 1])).height
+                        or normalized.filter(
+                            pl.col("is_open").is_null() | ~pl.col("is_open").is_in([0, 1])
+                        ).height
                     ):
                         raise ProviderError("calendar_incomplete", "交易日历缺失或包含非法开市标记")
                 if (
@@ -166,6 +211,22 @@ class SyncService:
                     )
                     if normalized.filter(pl.col("trade_date") != expected_day).height:
                         raise ProviderError("schema_error", f"{dataset} 返回日期与请求不一致")
+                coverage_info = dict(info or {})
+                if dataset == "daily" and "quality_reason" in normalized.columns:
+                    isolated = (
+                        normalized.filter(pl.col("quality_reason").is_not_null())
+                        .select("stock_code", "trade_date", "quality_reason", "raw_ohlc")
+                        .to_dicts()
+                    )
+                    if isolated:
+                        coverage_info.update(quarantined_ohlc=isolated, quality_status="degraded")
+                        for row in isolated:
+                            self.db.log(
+                                job_id,
+                                "warning",
+                                f"daily OHLC 异常已隔离：{row['stock_code']} {row['trade_date']} "
+                                f"{row['raw_ohlc']}；该日行情标为未知",
+                            )
                 self.repository.publish(
                     dataset,
                     normalized,
@@ -173,7 +234,7 @@ class SyncService:
                     self.provider.source,
                     job_id,
                     checkpoint=(job_id, f"{dataset}:{key}"),
-                    coverage_info=info,
+                    coverage_info=coverage_info,
                 )
                 self.db.log(job_id, "info", f"{dataset} {key}: {frame.height} 行已发布")
                 return frame
@@ -236,6 +297,10 @@ class SyncService:
         basics = self.repository.read("stock_basic", self.db.snapshot())
         if basics.is_empty():
             raise ProviderError("instruments_empty", "股票基础信息为空，无法确认市场股票池")
+        if modern:
+            excluded_delisted_codes = set(
+                basics.filter(pl.col("list_status") == "D")["stock_code"].to_list()
+            )
         codes = [
             row["stock_code"]
             for row in UniverseManager(self.repository).resolve(
@@ -380,6 +445,16 @@ class SyncService:
         # Per-stock calls include all records, not a latest-only yield field.
         if request.mode == "initialize" or policy not in {SYNC_POLICY, "daily_dividends_v2"}:
             stock_history("dividend", all_codes)
+        selected_days = set(days)
+        isolated_count = sum(
+            len(entry.get("quarantined_ohlc", []))
+            for entry in self.repository.coverage("daily", self.db.snapshot()).values()
+            if entry.get("trade_date") in selected_days
+        )
+        if isolated_count:
+            warnings.append(
+                f"同步范围内 {isolated_count} 条 OHLC 异常行情已隔离，相关行情及研究结果为未知"
+            )
         return {
             "warnings": warnings,
             "datasets": self.db.snapshot(),

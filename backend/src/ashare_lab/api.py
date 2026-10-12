@@ -8,6 +8,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 
+from ashare_lab.analytics import INGEST_PATH, AnalyticsService, PageViewRequest
 from ashare_lab.config import Settings
 from ashare_lab.notification_api import PREFIX, is_notification_route, router_for
 from ashare_lab.notifications import NotificationService
@@ -18,9 +19,14 @@ from ashare_lab.schemas import (
     PortfolioRequest,
     PresetRequest,
     ScreeningRequest,
+    StockCode,
     SyncRequest,
 )
 from ashare_lab.services import ApplicationService, ServiceError
+from ashare_lab.watchlist_api import PREFIX as WATCHLIST_PREFIX
+from ashare_lab.watchlist_api import is_watchlist_route
+from ashare_lab.watchlist_api import router_for as watchlist_router
+from ashare_lab.watchlists import WatchlistService
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -29,20 +35,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="ashare-lab", version="0.1.0")
     app.state.settings = settings
     app.state.service = service
+    analytics = AnalyticsService(service.db, settings.tz)
+    app.state.analytics = analytics
     notifications = NotificationService(settings, service.db, service.repository)
     app.state.notifications = notifications
     app.include_router(router_for(notifications))
+    app.state.watchlists = WatchlistService(service.db)
+    app.include_router(watchlist_router(app.state.watchlists, notifications))
 
     @app.middleware("http")
     async def access_control(request: Request, call_next: Any) -> Any:
+        if request.url.path == INGEST_PATH and request.method == "POST":
+            origin = request.headers.get("origin")
+            allowed = settings.public_origins() | {str(request.base_url).rstrip("/")}
+            if not origin or origin not in allowed:
+                return JSONResponse(
+                    status_code=403,
+                    content={"code": "origin_rejected", "message": "浏览上报必须来自同源页面"},
+                )
+            response = await call_next(request)
+            response.headers["Cache-Control"] = "no-store"
+            return response
         notification_route = is_notification_route(request.url.path, request.method)
-        if notification_route:
+        if notification_route or is_watchlist_route(request.url.path, request.method):
             try:
                 if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
                     origin = request.headers.get("origin")
                     # All public writes require a same-origin Origin header.
-                    expected = settings.notification_public_url.rstrip("/")
-                    if origin and origin not in {expected, str(request.base_url).rstrip("/")}:
+                    allowed = settings.public_origins() | {str(request.base_url).rstrip("/")}
+                    if origin and origin not in allowed:
                         return JSONResponse(
                             status_code=403,
                             content={
@@ -67,7 +88,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         except ValueError:
                             pass
                     notifications.rate_limit(f"write-ip:{ip}", 60, 60)
-                    if (
+                    if notification_route and (
                         request.url.path.endswith(("/test", "/verification"))
                         or request.method == "PUT"
                         or request.url.path == PREFIX + "/channels/webhook/enable"
@@ -108,16 +129,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not password or not secrets.compare_digest(supplied.encode(), password.encode()):
                 return JSONResponse(
                     status_code=403,
-                    content={"code": "data_management_locked", "message": "数据管理密码缺失或错误"},
+                    content={"code": "data_management_locked", "message": "后台管理密码缺失或错误"},
                 )
         return await call_next(request)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
-        if request.url.path.startswith(PREFIX):
+        if request.url.path == INGEST_PATH:
             return JSONResponse(
                 status_code=422,
-                content={"code": "invalid_parameters", "message": "通知输入参数无效"},
+                content={"code": "invalid_parameters", "message": "浏览上报参数无效"},
+            )
+        if request.url.path.startswith((PREFIX, WATCHLIST_PREFIX)):
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "code": "invalid_parameters",
+                    "message": "自选列表输入参数无效"
+                    if request.url.path.startswith(WATCHLIST_PREFIX)
+                    else "通知输入参数无效",
+                },
             )
         return await request_validation_exception_handler(request, exc)
 
@@ -132,6 +163,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok", "version": "0.1.0"}
 
+    @app.post(INGEST_PATH, status_code=204)
+    def pageview(payload: PageViewRequest) -> Response:
+        analytics.record(payload)
+        return Response(status_code=204)
+
+    @app.get("/api/v1/data/analytics")
+    def browsing_stats(
+        start_date: date | None = None, end_date: date | None = None
+    ) -> JSONResponse:
+        return JSONResponse(
+            analytics.summary(start_date, end_date), headers={"Cache-Control": "no-store"}
+        )
+
     @app.get("/api/v1/instruments")
     def instruments(
         as_of_date: date | None = None,
@@ -143,6 +187,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return service.instruments(
             as_of_date.isoformat() if as_of_date else None, search, page, page_size, data_version
         )
+
+    @app.get("/api/v1/instruments/{code}/company")
+    def company(code: StockCode) -> dict[str, Any]:
+        return service.company.read(code)
+
+    @app.post("/api/v1/instruments/{code}/company/refresh", status_code=202)
+    def refresh_company(code: StockCode, force: bool = False) -> dict[str, Any]:
+        return service.company.refresh(code, force)
+
+    @app.get("/api/v1/instruments/{code}/company/jobs/{job_id}")
+    def company_job(code: StockCode, job_id: str) -> dict[str, Any]:
+        job = service.job(job_id, "company_profile")
+        if job["payload"]["stock_code"] != code:
+            raise ServiceError(404, "not_found", "企业资料任务不存在")
+        return job
 
     @app.get("/api/v1/market/bars")
     def bars(
@@ -201,9 +260,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/v1/screening/rules")
     def rules() -> dict[str, Any]:
         from ashare_lab.factors import BOOLEAN_FACTORS, NUMERIC_FACTORS
+        from ashare_lab.signal_screening import describe_strategies
 
         return {
             "rules": service.registry.describe(),
+            "strategies": describe_strategies(),
             "factors": [
                 {"id": key, "name": info[0], "unit": info[1]}
                 for key, info in (NUMERIC_FACTORS | BOOLEAN_FACTORS).items()

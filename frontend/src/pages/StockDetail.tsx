@@ -6,6 +6,8 @@ import { ErrorBanner, Loading, PageTitle } from "../components/common";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import PriceChart from "../components/PriceChart";
+import CompanyDetails from "../components/CompanyDetails";
+import SignalResults from "../components/SignalResults";
 import type { BarsResponse, Factor, Results } from "../types";
 
 const flags: Record<string, string> = {
@@ -45,11 +47,6 @@ export default function StockDetail() {
   const names = new Map(registry.data?.factors.map((f) => [f.id, f.name]));
   return (
     <>
-      <Button asChild variant="outline">
-        <Link to={`/notifications?stock_code=${encodeURIComponent(code)}`}>
-          订阅信号通知
-        </Link>
-      </Button>
       <PageTitle
         title={row ? `${row.stock_name} · ${code}` : code}
         subtitle={`股票详情 · ${row?.as_of_date ?? bars.data?.anchor_date ?? ""}`}
@@ -117,10 +114,67 @@ export default function StockDetail() {
           · 缺失窗口不填充均线。
         </p>
       </Card>
+      {row?.recent_dividend && (
+        <Card className="mt-6 p-5">
+          <h2 className="font-semibold">
+            近期分红安排 · 未来{row.recent_dividend.days}天登记
+          </h2>
+          <p className="mt-2 text-xs text-muted-foreground">
+            截至筛选日前已公开的实施安排；每10股及万元估算均为税前，万元按筛选日收盘价及金额比例估算，不扣税费。
+          </p>
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr>
+                  <th>分红年度</th>
+                  <th>实施公告日</th>
+                  <th>股权登记日</th>
+                  <th>除息日</th>
+                  <th>派息日</th>
+                  <th>10股派息</th>
+                  <th>万元分红</th>
+                </tr>
+              </thead>
+              <tbody>
+                {row.recent_dividend.events.map((event, index) => (
+                  <tr key={index}>
+                    <td>{event.end_date ?? "—"}</td>
+                    <td>{event.imp_ann_date ?? "—"}</td>
+                    <td>{event.record_date}</td>
+                    <td>{event.ex_date ?? "—"}</td>
+                    <td>{event.pay_date ?? "—"}</td>
+                    <td>{event.cash_per_10.toFixed(2)} 元</td>
+                    <td>
+                      {event.estimated_cash_10000 == null
+                        ? "—"
+                        : `${event.estimated_cash_10000.toFixed(2)} 元`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!row.recent_dividend.events.length && (
+            <p className="mt-3 text-sm text-muted-foreground">
+              {row.recent_dividend.matched === null
+                ? "分红数据不足，无法确认近期安排。"
+                : "暂无近期分红安排。"}
+            </p>
+          )}
+        </Card>
+      )}
+      <CompanyDetails key={code} code={code} />
       {row && (
         <Card className="mt-6 p-5">
           <h2 className="mb-4 font-semibold">
-            规则 {row.rule_id} · {statusLabels[row.match_status]} · 具体触发数值
+            {row.rule_id
+              ? `规则 ${row.rule_id}`
+              : row.signal_results?.length
+                ? "策略信号"
+                : row.recent_dividend
+                  ? "近期分红"
+                  : "筛选条件"}{" "}
+            · {statusLabels[row.match_status]} · 具体触发数值
           </h2>
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -142,11 +196,11 @@ export default function StockDetail() {
                         condition.actual,
                       )}
                     >
-                      {formatFactor(condition.factor, condition.actual)}
+                      {formatFactor(condition.factor, condition.actual, true)}
                     </td>
                     <td>
                       {operators[condition.operator]}{" "}
-                      {formatFactor(condition.factor, condition.threshold)}
+                      {formatFactor(condition.factor, condition.threshold, true)}
                     </td>
                     <td>
                       <span className="badge">
@@ -162,6 +216,9 @@ export default function StockDetail() {
               </tbody>
             </table>
           </div>
+          {!!row.signal_results?.length && (
+            <SignalResults results={row.signal_results} />
+          )}
           <h3 className="mt-5 text-sm font-medium">数据质量与历史可见性</h3>
           <div className="mt-3 flex flex-wrap gap-2">
             {row.data_quality_flags.map((flag) => (

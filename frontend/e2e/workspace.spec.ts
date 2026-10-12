@@ -73,12 +73,12 @@ test("中文工作台、六规则、方案、导出与图表", async ({ page }) 
 
 test("数据页面与移动导航", async ({ page }) => {
   await page.goto("/data");
-  await expect(page.getByLabel("数据管理密码")).toBeVisible();
+  await expect(page.getByLabel("后台管理密码")).toBeVisible();
   const password = process.env.DATA_MANAGEMENT_PASSWORD;
   if (!password)
     throw new Error("数据管理浏览器验收需要 DATA_MANAGEMENT_PASSWORD 环境变量");
-  await page.getByLabel("数据管理密码").fill(password);
-  await page.getByRole("button", { name: "解锁数据管理" }).click();
+  await page.getByLabel("后台管理密码").fill(password);
+  await page.getByRole("button", { name: "解锁后台管理" }).click();
   await expect(page.getByRole("heading", { name: "本地数据集" })).toBeVisible({
     timeout: 30000,
   });
@@ -95,9 +95,9 @@ test("数据页面与移动导航", async ({ page }) => {
     page.getByRole("heading", { name: "本地数据集" }),
   ).not.toBeVisible();
   await page.reload();
-  await expect(page.getByLabel("数据管理密码")).toBeVisible();
-  await page.getByLabel("数据管理密码").fill(password);
-  await page.getByRole("button", { name: "解锁数据管理" }).click();
+  await expect(page.getByLabel("后台管理密码")).toBeVisible();
+  await page.getByLabel("后台管理密码").fill(password);
+  await page.getByRole("button", { name: "解锁后台管理" }).click();
   await expect(
     page.getByRole("tab", { name: "同步任务", exact: true }),
   ).toHaveAttribute("aria-selected", "true");

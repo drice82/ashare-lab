@@ -8,6 +8,7 @@ export default function ModuleTabs({
   resultLabel = "研究结果",
   result,
   history,
+  extraTabs = [],
   children,
 }: {
   mainLabel: string;
@@ -15,6 +16,7 @@ export default function ModuleTabs({
   resultLabel?: string;
   result?: ReactNode;
   history: (active: boolean) => ReactNode;
+  extraTabs?: { key: string; label: string; content: ReactNode }[];
   children: ReactNode;
 }) {
   const [query] = useSearchParams();
@@ -28,6 +30,7 @@ export default function ModuleTabs({
       label: historyLabel,
       content: history(query.get("tab") === "history"),
     },
+    ...extraTabs,
   ];
   return <Tabs label={`${mainLabel}功能分页`} tabs={tabs} defaultKey="main" />;
 }
